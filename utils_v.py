@@ -68,6 +68,7 @@ class ACOPFProblem:
     def __init__(self, filename, valid_frac=0.0833, test_frac=0.0833):
         data = spio.loadmat(filename)
         self.nbus = int(filename.split('_')[-1][4:-4])
+        print("number of bus: {}".format(self.nbus))
 
         ## Define useful power network quantities and indices
         ppc = CASE_FNS[self.nbus]()
@@ -172,6 +173,8 @@ class ACOPFProblem:
         self.pg_init = ppc['gen'][:, idx_gen.PG] / self.genbase
         self.qg_init = ppc['gen'][:, idx_gen.QG] / self.genbase
         print("the range of the voltage angle: {}, {}".format(self.va_init.min(), self.va_init.max()))
+        self.va_min = self.va_init.min()
+        self.va_max = self.va_init.max()
 
         # voltage angle at slack buses (known)
         self.slack_va = self.va_init[self.slack]
@@ -418,7 +421,7 @@ class ACOPFProblem:
         Y_partial = torch.zeros(Z.shape, device=self.device)
 
         Y_partial[:, :self.nspv] = Z[:, :self.nspv] * (self.vmax - self.vmin)[:self.nspv] + self.vmin[:self.nspv]
-        Y_partial[:, self.nspv:] = Z[:, self.nspv:] * 2.0 - 1.0
+        Y_partial[:, self.nspv:] = Z[:, self.nspv:] * (self.va_max - self.va_min) + self.va_min
 
         return PFFunction(self)(X, Y_partial)
 
@@ -471,7 +474,7 @@ class ACOPFProblem:
     
     
 
-def PFFunction(data, tol=1e-5, bsz=200, max_iters=10):
+def PFFunction(data, tol=1e-5, bsz=200, max_iters=20):
     class PFFunctionFn(Function):
         @staticmethod
         def forward(ctx, X, Z):
@@ -483,8 +486,8 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=10):
             Y[:, data.va_start_yidx + data.slack] = torch.tensor(data.slack_va, device=DEVICE) # va at slack bus is known
 
             # set the initial values for all vm and va at pq buses
-            Y[:, data.vm_start_yidx + data.pq] = torch.tensor(data.vm_init[data.pq]+0.01, device=DEVICE)
-            Y[:, data.va_start_yidx + data.pq] = torch.tensor(data.va_init[data.pq]+0.01, device=DEVICE)
+            Y[:, data.vm_start_yidx + data.pq] = torch.tensor(data.vm_init[data.pq], device=DEVICE)
+            Y[:, data.va_start_yidx + data.pq] = torch.tensor(data.va_init[data.pq] + 0.01, device=DEVICE)
 
             newton_guess_inds = np.concatenate([
                 data.vm_start_yidx + data.pq,
@@ -501,7 +504,7 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=10):
                 data.qflow_start_eqidx + data.pq
             ])  
         
-            converged = torch.zeros(X.shape[0])
+            converged = torch.zeros(X.shape[0], dtype=torch.bool, device=DEVICE)
             jacs = []
             newton_jacs_inv = []
             for b in range(0, X.shape[0], bsz):
@@ -526,12 +529,6 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=10):
                         eps = 1e-16
                         newton_jac_inv = torch.inverse(jac + eps*perturb)
 
-                    # jac = jac[:, :, newton_guess_inds_z]
-                    # # add a small perturbation to the diagonals of jac
-                    # perturb = torch.eye(jac.size(1)).unsqueeze(0).repeat(jac.size(0), 1, 1).to(DEVICE)
-                    # eps = 1e-16
-                    # newton_jac_inv = torch.inverse(jac + eps*perturb)
-
                     delta = newton_jac_inv.bmm(gy.unsqueeze(-1)).squeeze(-1)
                     Y_b[:, newton_guess_inds] -= delta
                     if torch.norm(delta, dim=1).abs().max() < tol:
@@ -540,7 +537,7 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=10):
                     print("the nr completion does not converge!")
 
                 converged[b:b+bsz] = (delta.abs() < tol).all(dim=1)
-                # print("number of non-converged samples: {}".format((converged[b:b+bsz] == 0).sum()))
+                print("number of non-converged samples: {}".format((converged[b:b+bsz] == 0).sum()))
                 # print("number of unsolvable samples: {}".format((status == 0).sum()))
                 jacs.append(jac_full) # only save the last step
                 newton_jacs_inv.append(newton_jac_inv)
@@ -556,6 +553,16 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=10):
             # solve for pg at slack bus (note: requires slack pg in Y to equal 0 at start of computation)
             Y[:, data.qg_start_yidx:data.qg_start_yidx + data.ng] = \
                 -data.eq_resid(X, Y)[:, data.qflow_start_eqidx + data.spv]
+            
+
+            # update the range for the voltage angles
+            if torch.sum(converged) > 0:
+                data.va_min = max(-np.pi, Y[converged][:, data.va_start_yidx + data.nonslack_idxes].min())
+                data.va_max = min(np.pi, Y[converged][:, data.va_start_yidx + data.nonslack_idxes].max())
+            else:
+                data.va_min = max(-np.pi, Y[:, data.va_start_yidx + data.nonslack_idxes].min())
+                data.va_max = min(np.pi, Y[:, data.va_start_yidx + data.nonslack_idxes].max())
+            print("current range of the voltage angle: {}, {}".format(data.va_min, data.va_max))
 
             ctx.data = data
             ctx.save_for_backward(torch.cat(jacs), torch.cat(newton_jacs_inv),
