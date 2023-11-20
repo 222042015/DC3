@@ -6,7 +6,8 @@ torch.set_default_dtype(torch.float64)
 import numpy as np
 import osqp
 from qpth.qp import QPFunction
-import ipopt
+# import ipopt
+import cyipopt as ipopt
 from scipy.linalg import svd
 from scipy.sparse import csc_matrix
 
