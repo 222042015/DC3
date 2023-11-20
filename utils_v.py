@@ -554,16 +554,6 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=20):
             Y[:, data.qg_start_yidx:data.qg_start_yidx + data.ng] = \
                 -data.eq_resid(X, Y)[:, data.qflow_start_eqidx + data.spv]
             
-
-            # update the range for the voltage angles
-            if torch.sum(converged) > 0:
-                data.va_min = max(-np.pi, Y[converged][:, data.va_start_yidx + data.nonslack_idxes].min())
-                data.va_max = min(np.pi, Y[converged][:, data.va_start_yidx + data.nonslack_idxes].max())
-            else:
-                data.va_min = max(-np.pi, Y[:, data.va_start_yidx + data.nonslack_idxes].min())
-                data.va_max = min(np.pi, Y[:, data.va_start_yidx + data.nonslack_idxes].max())
-            print("current range of the voltage angle: {}, {}".format(data.va_min, data.va_max))
-
             ctx.data = data
             ctx.save_for_backward(torch.cat(jacs), torch.cat(newton_jacs_inv),
                 torch.tensor(newton_guess_inds, device=DEVICE), 
