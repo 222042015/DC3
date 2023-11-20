@@ -16,7 +16,7 @@ from copy import deepcopy
 import scipy.io as spio
 import time
 
-from pypower.api import case57
+from pypower.api import case57, case39, case118
 from pypower.api import opf, makeYbus
 from pypower import idx_bus, idx_gen, ppoption
 
@@ -610,7 +610,7 @@ class nonconvex_ipopt(object):
 ###################################################################
 
 
-CASE_FNS = dict([(57, case57)])
+CASE_FNS = dict([(57, case57), (39, case39), (118, case118)])
 
 class ACOPFProblem:
     """
