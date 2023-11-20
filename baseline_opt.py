@@ -104,6 +104,8 @@ def main():
         opt_results.update(
             dict([('test_time', test_time_parallel), ('valid_time', valid_time_parallel), ('train_time', 0),
                 ('test_time_total', test_time_total), ('valid_time_total', valid_time_total), ('train_time_total', 0)]))
+        
+        print("valid eval: {:.4f}, valid time {:.4f}".format(np.mean(opt_results['valid_eval']), np.mean(opt_results['valid_time'])))
         with open(os.path.join(save_dir, 'results.dict'), 'wb') as f:
             pickle.dump(opt_results, f)
 
