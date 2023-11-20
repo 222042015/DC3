@@ -27,8 +27,8 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='acopf57',
-        choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
+    parser.add_argument('--probType', type=str, default='acopf57',help='problem type')
+        # choices=['simple', 'nonconvex', 'acopf57', 'acopf118', 'acopf300', 'acopf1354'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -98,11 +98,13 @@ def main():
     elif prob_type == 'nonconvex':
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
-    elif prob_type == 'acopf57':
-        filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
+    # elif prob_type == 'acopf57':
+    elif prob_type[:5] == 'acopf':
+        filepath = os.path.join('datasets', 'acopf', prob_type + '_dataset')
+        # filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
     else:
         raise NotImplementedError
-
+    # read the data and transfer to GPU
     with open(filepath, 'rb') as f:
         data = pickle.load(f)
     for attr in dir(data):
@@ -146,18 +148,6 @@ def train_net(data, args, save_dir):
     for i in range(nepochs):
         epoch_stats = {}
 
-        # Get valid loss
-        solver_net.eval()
-        for Xvalid in valid_loader:
-            Xvalid = Xvalid[0].to(DEVICE)
-            eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
-
-        # Get test loss
-        solver_net.eval()
-        for Xtest in test_loader:
-            Xtest = Xtest[0].to(DEVICE)
-            eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
-
         # Get train loss
         solver_net.train()
         for Xtrain in train_loader:
@@ -172,13 +162,26 @@ def train_net(data, args, save_dir):
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
+        
+        # Get valid loss
+        solver_net.eval()
+        for Xvalid in valid_loader:
+            Xvalid = Xvalid[0].to(DEVICE)
+            eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
+
+        if i%100 == 0:
+            # Get test loss
+            solver_net.eval()
+            for Xtest in test_loader:
+                Xtest = Xtest[0].to(DEVICE)
+                eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
 
         print(
-            'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}'.format(
+            'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, eq num viol {:.4f}, steps {}, time {:.4f}'.format(
                 i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
                 np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
-                np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time'])))
+                np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_eq_num_viol_0']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time'])))
 
         if args['saveAllStats']:
             if i == 0:
@@ -302,6 +305,9 @@ def grad_steps(data, X, Y, args):
                 eq_step = data.eq_grad(X, Y_new)
                 Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
             
+            if torch.max(torch.abs(Y_step)) > 1e16:
+                break
+            
             new_Y_step = lr * Y_step + momentum * old_Y_step
             Y_new = Y_new - new_Y_step
 
@@ -338,11 +344,16 @@ def grad_steps_all(data, X, Y, args):
                     eq_step = data.eq_grad(X, Y_new)
                     Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
                 
+                if torch.max(torch.abs(Y_step)) > 1e16:
+                    break
+
                 new_Y_step = lr * Y_step + momentum * old_Y_step
                 Y_new = Y_new - new_Y_step
 
                 old_Y_step = new_Y_step
                 i += 1
+
+                
 
         return Y_new, i
     else:
@@ -357,8 +368,11 @@ class NNSolver(nn.Module):
         self._data = data
         self._args = args
         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
+        # layers = reduce(operator.add,
+        #     [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
+        #         for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
         layers = reduce(operator.add,
-            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
+            [[nn.Linear(a,b), nn.ReLU()]
                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
         
         output_dim = data.ydim - data.nknowns
@@ -380,6 +394,7 @@ class NNSolver(nn.Module):
         if self._args['useCompl']:
             if 'acopf' in self._args['probType']:
                 out = nn.Sigmoid()(out)   # used to interpolate between max and min values
+                # out = nn.Hardsigmoid()(out)
             return self._data.complete_partial(x, out)
         else:
             return self._data.process_output(x, out)
