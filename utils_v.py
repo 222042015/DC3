@@ -204,9 +204,11 @@ class ACOPFProblem:
         self.output_dim = 2*self.nspv - self.nslack  # vm for all pv and slack buses, the va for the slack bus is known
         ### For Pytorch
         self._device = None
+        self.bound = True
 
         # self.pred_demand(self.X, self.Y)
         Sf, St = self.get_branch_flow(self.X, self.Y)
+
 
 
     def __str__(self):
@@ -554,16 +556,22 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=20):
             Y[:, data.qg_start_yidx:data.qg_start_yidx + data.ng] = \
                 -data.eq_resid(X, Y)[:, data.qflow_start_eqidx + data.spv]
             
-            print("the range of the voltage angle: {}, {}".format(data.va_min, data.va_max))
-            if torch.sum(converged) / X.shape[0] > 0.8:
-                data.va_min = max(data.va_min, Y[converged][:, data.va_start_yidx + data.nonslack_idxes].min())
-                data.va_max = min(data.va_max, Y[converged][:, data.va_start_yidx + data.nonslack_idxes].max())
-            else:
-                # thrink the bound for the voltage angle
-                data.va_min = data.va_min / 2
-                data.va_max = data.va_max / 2
-            data.va_min = max(data.va_min, -np.pi)
-            data.va_max = min(data.va_max, np.pi)
+            if data.bound:
+                print("the range of the voltage angle: {}, {}".format(data.va_min, data.va_max))
+                if torch.sum(converged) / X.shape[0] > 0.8:
+                    # with a probability, the range of the voltage angle is multiplied by 1.2
+                    if np.random.rand() > 0.9:
+                        data.va_min = max(-np.pi, data.va_min*1.2)
+                        data.va_max = min(np.pi, data.va_max*1.2)
+                    else:
+                        data.va_min = max(data.va_min, Y[converged][:, data.va_start_yidx + data.nonslack_idxes].min())
+                        data.va_max = min(data.va_max, Y[converged][:, data.va_start_yidx + data.nonslack_idxes].max())
+                else:
+                    # thrink the bound for the voltage angle
+                    data.va_min = data.va_min / 1.2
+                    data.va_max = data.va_max / 1.2
+                data.va_min = max(data.va_min, -np.pi)
+                data.va_max = min(data.va_max, np.pi)
             
 
             ctx.data = data 
