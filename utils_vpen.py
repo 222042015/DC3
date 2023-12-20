@@ -26,7 +26,7 @@ from numpy import zeros, c_, shape, ix_
 
 from pypower.idx_brch import F_BUS, T_BUS, ANGMAX, ANGMIN, RATE_A
 
-from pypower.ext2int import ext2int, ext2int1
+from pypower.ext2int import ext2int
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 # DEVICE = torch.device("cpu")
@@ -70,10 +70,10 @@ class ACOPFProblem:
         self.formulation = formulation
         ## Define useful power network quantities and indices
         ppc = CASE_FNS[self.nbus]()
-        # ppc = loadcase('/home/jxxiong/A-xjx/DC3/datasets/acopf_v/case/case'+str(self.nbus)+'.py')
+        # ppc = loadcase('/home/jxxiong/A-xjx/DC3/datasets/acopf/case'+str(self.nbus)+'.py')
 
         ## change to internal indexing
-        # ppc = ext2int(ppc)
+        ppc = ext2int(ppc)
         self.ppc = ppc
 
         self.genbase = ppc['gen'][:, idx_gen.MBASE]
@@ -104,8 +104,8 @@ class ACOPFProblem:
 
         # branch data
         self.branch = ppc['branch']
-        self.fbus = self.branch[:, F_BUS].astype(int)-1
-        self.tbus = self.branch[:, T_BUS].astype(int)-1
+        self.fbus = self.branch[:, F_BUS].astype(int)
+        self.tbus = self.branch[:, T_BUS].astype(int)
 
         self.angmax = torch.tensor(np.deg2rad(self.branch[:, ANGMAX]), dtype=torch.get_default_dtype())
         self.angmin = torch.tensor(np.deg2rad(self.branch[:, ANGMIN]), dtype=torch.get_default_dtype())
@@ -123,9 +123,9 @@ class ACOPFProblem:
         self.limited_branch = np.where(self.bfmax > 0.0)[0]
         self.bfmax = torch.tensor(self.bfmax[self.limited_branch], dtype=torch.get_default_dtype())
 
-        ppc2 = ext2int(ppc)
-        Ybus, Yf, Yt = makeYbus(self.baseMVA, ppc2['bus'], ppc2['branch'])
-        # Ybus, Yf, Yt = makeYbus(self.baseMVA, self.ppc['bus'], self.ppc['branch'])
+        # ppc2 = ext2int(ppc)
+        # Ybus, _, _ = makeYbus(self.baseMVA, ppc2['bus'], ppc2['branch'])
+        Ybus, Yf, Yt = makeYbus(self.baseMVA, self.ppc['bus'], self.ppc['branch'])
         Ybus = Ybus.todense()
         Yf = Yf.todense()
         Yt = Yt.todense()
@@ -169,11 +169,9 @@ class ACOPFProblem:
         self.va_init = np.deg2rad(ppc['bus'][:, idx_bus.VA])
         self.pg_init = ppc['gen'][:, idx_gen.PG] / self.genbase
         self.qg_init = ppc['gen'][:, idx_gen.QG] / self.genbase
-        print("the range of the voltage initial angle: {}, {}".format(self.va_init[self.spv].min(), self.va_init[self.spv].max()))
-        # self.va_min = self.va_init[self.spv].min() * 1.1 #- np.pi/4
-        # self.va_max = self.va_init[self.spv].max() * 1.1 #+ np.pi/4
-        self.va_min = -np.pi
-        self.va_max = np.pi
+        
+        self.va_min = self.va_init.min()
+        self.va_max = self.va_init.max()
 
         # voltage angle at slack buses (known)
         self.slack_va = self.va_init[self.slack]
@@ -222,10 +220,6 @@ class ACOPFProblem:
 
         # self.pred_demand(self.X, self.Y)
         # Sf, St = self.get_branch_flow(self.X, self.Y)
-
-        _, _, vm, va = self.get_yvars(self.Y)
-        # print("the range of the voltage magnitude: {}, {}".format(vm.min(), vm.max()))
-        print("the range of the voltage angle: {}, {}".format(va.min(), va.max()))
 
 
 
@@ -448,22 +442,12 @@ class ACOPFProblem:
         resids = self.eq_resid(X, Y)
         return torch.abs(resids)
     
-    # def complete_partial(self, X, Z):
-    #     Y_partial = torch.zeros(Z.shape, device=self.device)
-
-    #     Y_partial[:, :self.nspv] = Z[:, :self.nspv] * (self.vmax - self.vmin)[:self.nspv] + self.vmin[:self.nspv]
-    #     Y_partial[:, self.nspv:] = Z[:, self.nspv:] * (self.va_max - self.va_min) + self.va_min
-
-    #     return PFFunction(self)(X, Y_partial)
-    def scale_partial(self, Z):
+    def complete_partial(self, X, Z):
         Y_partial = torch.zeros(Z.shape, device=self.device)
 
         Y_partial[:, :self.nspv] = Z[:, :self.nspv] * (self.vmax - self.vmin)[:self.nspv] + self.vmin[:self.nspv]
-        Y_partial[:, self.nspv:] = Z[:, self.nspv:] * (self.va_max - self.va_min) + self.va_min
-        return Y_partial
+        Y_partial[:, self.nspv:] = Z[:, self.nspv:]*np.pi - np.pi/2 # * (self.va_max - self.va_min) + self.va_min
 
-    def complete_partial(self, X, Y_partial):
-        # Y_partial = self.scale_partial(Z)
         return PFFunction(self)(X, Y_partial)
 
 
@@ -515,7 +499,7 @@ class ACOPFProblem:
     
     
 
-def PFFunction(data, tol=1e-5, bsz=200, max_iters=50):
+def PFFunction(data, tol=1e-5, bsz=200, max_iters=20):
     class PFFunctionFn(Function):
         @staticmethod
         def forward(ctx, X, Z):
@@ -527,9 +511,8 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=50):
             Y[:, data.va_start_yidx + data.slack] = torch.tensor(data.slack_va, device=DEVICE) # va at slack bus is known
 
             # set the initial values for all vm and va at pq buses
-            Y[:, data.vm_start_yidx + data.pq] = torch.tensor(data.vm_init[data.pq]+0.01, device=DEVICE)
-            Y[:, data.va_start_yidx + data.pq] = torch.tensor(data.va_init[data.pq]+0.001, device=DEVICE)
-            # Y[:, data.va_start_yidx + data.pq] = torch.zeros((X.shape[0], data.pq.shape[0]), device=DEVICE)
+            Y[:, data.vm_start_yidx + data.pq] = torch.tensor(data.vm_init[data.pq], device=DEVICE)
+            Y[:, data.va_start_yidx + data.pq] = torch.tensor(data.va_init[data.pq], device=DEVICE)
 
             newton_guess_inds = np.concatenate([
                 data.vm_start_yidx + data.pq,
@@ -546,8 +529,7 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=50):
                 data.qflow_start_eqidx + data.pq
             ])  
         
-            # converged = torch.zeros(X.shape[0], dtype=torch.bool, device=DEVICE, requires_grad=False)
-            converged = torch.zeros(X.shape[0], device=DEVICE, requires_grad=False)
+            converged = torch.zeros(X.shape[0], dtype=torch.bool, device=DEVICE)
             jacs = []
             newton_jacs_inv = []
             for b in range(0, X.shape[0], bsz):
@@ -569,21 +551,13 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=50):
                         newton_jac_inv = torch.inverse(jac)
                     except:
                         perturb = torch.eye(jac.size(1)).unsqueeze(0).repeat(jac.size(0), 1, 1).to(DEVICE)
-                        eps = 1e-20
+                        eps = 1e-16
                         newton_jac_inv = torch.inverse(jac + eps*perturb)
 
                     delta = newton_jac_inv.bmm(gy.unsqueeze(-1)).squeeze(-1)
                     Y_b[:, newton_guess_inds] -= delta
-                    # update the voltage angle to the periodic function into -pi, pi
-                    # Y_b[:, data.va_start_yidx:] = torch.fmod(Y_b[:, data.va_start_yidx:] - data.va_min, 2*np.pi) + data.va_min
-                    # k = torch.floor((Y_b[:, data.va_start_yidx:]/np.pi + 1) / 2)
-                    # Y_b[:, data.va_start_yidx:] = Y_b[:, data.va_start_yidx:] - 2*np.pi*k
                     if torch.norm(delta, dim=1).abs().max() < tol:
                         break
-
-                    # if torch.norm(gy, dim=1).abs().max() > 1e5:
-                    #     print("the nr completion does not converge!")
-                    #     break
                 else:
                     print("the nr completion does not converge!")
 
@@ -606,10 +580,10 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=50):
                 torch.tensor(newton_guess_inds, device=DEVICE), 
                 torch.tensor(keep_constr, device=DEVICE))
 
-            return Y, converged
+            return Y
 
         @staticmethod
-        def backward(ctx, dl_dy, convereged):
+        def backward(ctx, dl_dy):
 
             data = ctx.data
             jac, newton_jac_inv, newton_guess_inds, keep_constr = ctx.saved_tensors

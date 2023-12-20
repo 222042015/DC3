@@ -116,7 +116,7 @@ def main():
                 pass
     data._device = DEVICE
 
-    save_dir = os.path.join('results', str(data), 'method', my_hash(str(sorted(list(args.items())))),
+    save_dir = os.path.join('results', str(data), 'method_deeplde', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -142,20 +142,21 @@ def train_net(data, args, save_dir):
 
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
-    solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
+    solver_opt = optim.Adam(solver_net.parameters(), lr=1e-3)
 
     stats = {}
-    T = 15 # total outer iterations
+    T = 42 # total outer iterations
     I = 25 # total innter iterations
     I_warmup = 100
     beta = 5 # increase the number of inner interations after each outer iteration
     gamma = 0.01 # decrease the step size for the dual update every outer iteration
 
     # initialize the dual variables and the step size
-    rho = 0.1
+    rho = 0.5
     lam = torch.ones(data.nineq, device=DEVICE) * 0.1
+    # lam = torch.zeros(data.nineq, device=DEVICE)
+    step = 0
     for t in range(T+1):
-        total_ineq_dist = torch.zeros(data.nineq, device=DEVICE)
         if t == 0:
             inner_iter = I_warmup
         else:
@@ -163,7 +164,6 @@ def train_net(data, args, save_dir):
 
         for i in range(inner_iter):
             epoch_stats = {}
-
             # Get train loss
             solver_net.train()
             for Xtrain in train_loader:
@@ -171,13 +171,10 @@ def train_net(data, args, save_dir):
                 start_time = time.time()
                 solver_opt.zero_grad()
                 Yhat_train = solver_net(Xtrain)
-                # Ynew_train = grad_steps(data, Xtrain, Yhat_train, args)
                 train_loss = total_loss(data, Xtrain, Yhat_train, lam)
                 train_loss.sum().backward()
                 solver_opt.step()
                 train_time = time.time() - start_time
-                with torch.no_grad():
-                    total_ineq_dist += data.ineq_dist(Xtrain, Yhat_train).sum(dim=0)
                 dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
                 dict_agg(epoch_stats, 'train_time', train_time, op='sum')
         
@@ -187,7 +184,7 @@ def train_net(data, args, save_dir):
                 Xvalid = Xvalid[0].to(DEVICE)
                 eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats, lam)
 
-            if i%100 == 0:
+            if i%1 == 0:
                 # Get test loss
                 solver_net.eval()
                 for Xtest in test_loader:
@@ -202,7 +199,7 @@ def train_net(data, args, save_dir):
                     np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
 
             if args['saveAllStats']:
-                if i == 0:
+                if t == 0 and i == 0:
                     for key in epoch_stats.keys():
                         stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
                 else:
@@ -216,17 +213,27 @@ def train_net(data, args, save_dir):
                     pickle.dump(stats, f)
                 with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
                     torch.save(solver_net.state_dict(), f)
+            
+            # total_ineq_dist.append(epoch_ineq_dist)
+            # append epoch_ineq_dist to total_ineq_dist
+
+            step += 1
 
 
-        if t > 0:
-           ## update the dual variables
-            with torch.no_grad():
-                lam = lam + rho * total_ineq_dist
-                I = I + beta
-                rho = rho / (1 + gamma * t)
+        with torch.no_grad():
+            epoch_ineq_dist = torch.zeros(data.nineq, device=DEVICE)
+            for Xtrain in train_loader:
+                Xtrain = Xtrain[0].to(DEVICE)
+                Yhat_train = solver_net(Xtrain)
+                epoch_ineq_dist += data.ineq_dist(Xtrain, Yhat_train).sum(dim=0)
+            if t == 0:
+                lam = torch.ones(data.nineq, device=DEVICE) * 0.1
+            else:
+                lam = lam + rho * epoch_ineq_dist
+            I = I + beta
+            rho = rho / (1 + gamma * t)
 
-        print("outer iteration: {}, rho: {}, lam: {}".format(t, rho, lam.abs().max().item()))
-
+        print("outer iteration: {}, step: {}, rho: {}, lam: {}".format(t, step, rho, lam.abs().max().item()))
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
         pickle.dump(stats, f)
@@ -253,16 +260,8 @@ def eval_net(data, X, solver_net, args, prefix, stats, lam):
 
     start_time = time.time()
     Y = solver_net(X)
-    base_end_time = time.time()
-
-    # Ycorr, steps = grad_steps_all(data, X, Y, args)
     end_time = time.time()
-
-    # Ynew = grad_steps(data, X, Y, args)
-    # raw_end_time = time.time()
-
     dict_agg(stats, make_prefix('time'), end_time - start_time, op='sum')
-    # dict_agg(stats, make_prefix('steps'), np.array([steps]))
     dict_agg(stats, make_prefix('loss'), total_loss(data, X, Y, lam).detach().cpu().numpy())
     dict_agg(stats, make_prefix('eval'), data.obj_fn(Y).detach().cpu().numpy())
     dict_agg(stats, make_prefix('ineq_max'), torch.max(data.ineq_dist(X, Y), dim=1)[0].detach().cpu().numpy())
@@ -282,6 +281,15 @@ def eval_net(data, X, solver_net, args, prefix, stats, lam):
              torch.sum(torch.abs(data.eq_resid(X, Y)) > 10 * eps_converge, dim=1).detach().cpu().numpy())
     dict_agg(stats, make_prefix('eq_num_viol_2'),
              torch.sum(torch.abs(data.eq_resid(X, Y)) > 100 * eps_converge, dim=1).detach().cpu().numpy())
+    
+    dict_agg(stats, make_prefix('raw_time'), end_time - start_time, op='sum')
+    # dict_agg(stats, make_prefix('steps'), np.array([steps]))
+    dict_agg(stats, make_prefix('raw_eval'), data.obj_fn(Y).detach().cpu().numpy())
+    dict_agg(stats, make_prefix('raw_ineq_max'), torch.max(data.ineq_dist(X, Y), dim=1)[0].detach().cpu().numpy())
+    dict_agg(stats, make_prefix('raw_ineq_mean'), torch.mean(data.ineq_dist(X, Y), dim=1).detach().cpu().numpy())
+    dict_agg(stats, make_prefix('raw_eq_max'),
+             torch.max(torch.abs(data.eq_resid(X, Y)), dim=1)[0].detach().cpu().numpy())
+    dict_agg(stats, make_prefix('raw_eq_mean'), torch.mean(torch.abs(data.eq_resid(X, Y)), dim=1).detach().cpu().numpy())
     return stats
 
 

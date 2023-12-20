@@ -129,8 +129,8 @@ def baseline_eq_nn_default_args(prob_type):
 def method_default_args(prob_type):
     defaults = {}
     defaults['simpleVar'] = 100
-    defaults['simpleIneq'] = 30
-    defaults['simpleEq'] = 70
+    defaults['simpleIneq'] = 50
+    defaults['simpleEq'] = 50
     defaults['simpleEx'] = 10000
     defaults['nonconvexVar'] = 100
     defaults['nonconvexIneq'] = 50
@@ -172,7 +172,7 @@ def method_default_args(prob_type):
         defaults['corrLr'] = 1e-7
         defaults['corrMomentum'] = 0.5
     elif 'acopf' in prob_type:
-        defaults['epochs'] = 2000
+        defaults['epochs'] = 1000
         defaults['batchSize'] = 200
         defaults['lr'] = 1e-3
         defaults['hiddenSize'] = 200
@@ -185,7 +185,7 @@ def method_default_args(prob_type):
         defaults['corrTrainSteps'] = 5
         defaults['corrTestMaxSteps'] = 5
         defaults['corrEps'] = 1e-4
-        defaults['corrLr'] = 1e-5           # use 1e-5 if useCompl=False
+        defaults['corrLr'] = 1e-4           # use 1e-5 if useCompl=False
         defaults['corrMomentum'] = 0.5
     else:
         raise NotImplementedError
@@ -261,7 +261,7 @@ def deepv_default_args(prob_type):
         defaults['batchSize'] = 200
         defaults['epochs'] = 2000
         defaults['lr'] = 5e-4
-        defaults['hiddenSize'] = 100
+        defaults['hiddenSize'] = 200
     else:
         raise NotImplementedError
     

@@ -55,7 +55,7 @@ def main():
             args[key] = defaults[key]
     print(args)
 
-    setproctitle('DeepV-{}'.format(args['probType']))
+    setproctitle('DeepVPen-{}'.format(args['probType']))
 
     # Load data, and put on GPU if needed
     prob_type = args['probType']
@@ -76,7 +76,7 @@ def main():
                 pass
     data._device = DEVICE
 
-    save_dir = os.path.join('results', str(data), 'method_deepv', my_hash(str(sorted(list(args.items())))),
+    save_dir = os.path.join('results', str(data), 'method_deepvpen', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -101,66 +101,89 @@ def train_net(data, args, save_dir):
     test_loader = DataLoader(test_dataset, batch_size=len(test_dataset))
 
     solver_net = NNSolver(data, args)
+    solver_step = 5e-4
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
-    clip_value = 1.0  # You can adjust this value as needed
-    # for param in solver_net.parameters():
-    #     param.grad.data.clamp_(-clip_value, clip_value)
+
+
+    dual_net = Dual_NN(data, args)
+    dual_step = 5e-4 #1e-4(118)
+    dual_net.to(DEVICE)
+    dual_opt = optim.Adam(dual_net.parameters(), lr=dual_step)
+
+    dual_net_copy = Dual_NN(data, args)
+    dual_net_copy.to(DEVICE)
+    dual_net_copy.load_state_dict(dual_net.state_dict())
+    dual_net_copy.eval()
 
     stats = {}
-    T = 41
-    I = 25
-    I_warmup = 100
+    T = 20 # total outer iterations
+    I = 150 # total innter iterations
+    I_warmup = 200
 
     # parameters for updating dual variables
-    beta = 5
-    gamma = 0.01
-    rho = 0.5
-    lam = torch.ones(data.nineq, device=DEVICE)*1
-    # lam = torch.zeros(data.nineq, device=DEVICE)
-    
+    rho = 1
 
-    # inner loop: train the solver_net so that the predicted demand is close to the true demand
-    # outer loop: train the solver_net so that the predicted solution is feasible, by updating the dual variables
+    args['rho'] = rho
+
+    rho_max = 30000
+    alpha = 5 # 5-118
+    v_prev = -float('inf')
     step = 0
+    gamma = 0.005
+
     for t in range(T+1):
         
         if t == 0:
             inner_iter = I_warmup
+        elif t == T:
+            inner_iter = 500
         else:
             inner_iter = I 
 
         solver_net.train()
+        dual_net.eval()
         for i in range(inner_iter):
             epoch_stats = {}
+            v = -float('inf')
             for Xtrain in train_loader:
                 Xtrain = Xtrain[0].to(DEVICE)
                 start_time = time.time()
                 solver_opt.zero_grad()
                 Yhat_train = solver_net(Xtrain)
+                if t == 0:
+                    lam = torch.zeros((Xtrain.shape[0], data.nineq), device=DEVICE)
+                else:
+                    lam = dual_net(Xtrain)
                 train_loss = total_loss(data, Xtrain, Yhat_train, lam, rho)
                 train_loss.sum().backward()
-                nn.utils.clip_grad_value_(solver_net.parameters(), clip_value)
                 solver_opt.step()
                 train_time = time.time() - start_time
+                with torch.no_grad():
+                    ineq_resid = data.ineq_resid(Xtrain, Yhat_train)
+                    sigma = torch.max(-lam/rho, ineq_resid)
+                    v = max(v, torch.max(torch.norm(sigma, dim=1, p=float('inf'))).detach().cpu().numpy())
                     
                 dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
                 dict_agg(epoch_stats, 'train_time', train_time, op='sum')
 
+            
             # Get valid loss
             solver_net.eval()
+            dual_net.eval()
             for Xvalid in valid_loader:
                 Xvalid = Xvalid[0].to(DEVICE)
-                eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats, lam, rho)
+                eval_net(data, Xvalid, solver_net, dual_net, 'valid', epoch_stats, rho)
 
             if i%1 == 0:
                 # Get test loss
                 solver_net.eval()
+                dual_net.eval()
                 for Xtest in test_loader:
                     Xtest = Xtest[0].to(DEVICE)
-                    eval_net(data, Xtest, solver_net, args, 'test', epoch_stats, lam, rho)
+                    eval_net(data, Xtest, solver_net, dual_net, 'test', epoch_stats, rho)
             
-            if i%1 == 0:
+            if i%10 == 0:
                 print(
                     'Epoch {}: train loss {:.4f}, eval {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, eq mean {:.4f}, eq num viol {:.4f}, time {:.4f}'.format(
                         i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
@@ -168,7 +191,9 @@ def train_net(data, args, save_dir):
                         np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0'])/data.nineq,
                         np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_eq_mean']),
                         np.mean(epoch_stats['valid_eq_num_viol_0'])/data.neq, np.mean(epoch_stats['valid_time'])))
-            
+                print('train ineq: {}'.format(torch.max(data.ineq_dist(Xtrain, Yhat_train), dim=1)[0].mean().detach().cpu().numpy()))
+                # print('va_min: {}, va_max: {}'.format(va_min, va_max))
+
             if args['saveAllStats']:
                 if t == 0 and i == 0:
                     for key in epoch_stats.keys():
@@ -178,29 +203,62 @@ def train_net(data, args, save_dir):
                         stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
             else:
                 stats = epoch_stats
+
             
             if step % args['resultsSaveFreq'] == 0:
                 with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
                     pickle.dump(stats, f)
                 with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
                     torch.save(solver_net.state_dict(), f)
-            step += 1
 
-        with torch.no_grad():
-            total_ineq_dist = torch.zeros(data.nineq, device=DEVICE)
+            step += 1
+        # dual learning
+        dual_net_copy.load_state_dict(dual_net.state_dict())
+        dual_net.train()
+        solver_net.eval()
+        for i in range(100):
+            dual_epoch_stats = {}
             for Xtrain in train_loader:
                 Xtrain = Xtrain[0].to(DEVICE)
                 Yhat_train = solver_net(Xtrain)
-                total_ineq_dist += data.ineq_dist(Xtrain, Yhat_train).sum(dim=0)
-            # lam = lam + rho * total_ineq_dist
-            if t == 0:
-                lam = torch.ones(data.nineq, device=DEVICE)*0.1
-            else:
-                lam = lam + rho * total_ineq_dist
-            I = I + beta
-            rho = rho / (1 + gamma * t)
+                dual_opt.zero_grad()
+                lam_pred = dual_net(Xtrain)
+                if t == 0:
+                    lam_prev = torch.zeros((Xtrain.shape[0], data.nineq), device=DEVICE)
+                else:
+                    lam_prev = dual_net_copy(Xtrain)
+                dual_total_loss = dual_loss(data, Xtrain, Yhat_train, lam_prev, lam_pred, rho)
+                dual_total_loss.sum().backward()
+                dual_opt.step()
 
-        print("outer iteration: {}, step: {}, rho: {}, lam: {}".format(t, step, rho, lam.max().item()))
+                dict_agg(dual_epoch_stats, 'dual_loss', dual_total_loss.detach().cpu().numpy(), )
+
+            if i % 10 == 0:
+                print('Epoch {}: dual loss {:.4f}'.format(i, np.mean(dual_epoch_stats['dual_loss'])))
+
+        # update rho
+        with torch.no_grad():
+            if v > 0.6 * v_prev:
+                rho = min(alpha * rho, rho_max)
+        v_prev = v
+            
+
+        I += 5
+        # if t % 5 == 0:
+        #     # update the learning rate of the solver
+        #     solver_step = solver_step * 0.995
+        #     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
+
+        #     dual_step = dual_step * 0.995
+        #     dual_opt = optim.Adam(dual_net.parameters(), lr=dual_step)
+
+        # for param_group in solver_opt.param_groups:
+        #     param_group['lr'] = solver_step / (1 + gamma*t)
+        
+        # for param_group in dual_opt.param_groups:
+        #     param_group['lr'] = dual_step / (1 + gamma*t)
+
+        print("outer iteration: {}, step: {}, rho: {}".format(t, step, rho))
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
         pickle.dump(stats, f)
@@ -210,16 +268,41 @@ def train_net(data, args, save_dir):
     return solver_net, stats
 
 def total_loss(data, X, Y, lam, rho):
-    obj_cost = data.obj_fn(Y)
+    obj_cost = data.obj_fn(Y) 
     ineq_dist = data.ineq_dist(X, Y)
-    # print("loss: {:.4f}, dual: {:.4f}, pen: {:.4f}".format(obj_cost.sum().item(), torch.sum(lam * ineq_dist, dim=1).sum().item(), torch.sum(ineq_dist**2, dim=1).sum().item()))
-    return obj_cost + torch.sum(lam * ineq_dist, dim=1) + (50+lam.mean()) * torch.sum(ineq_dist**2, dim=1)
+    ineq_resid = data.ineq_resid(X, Y)
+    eq_dist = data.eq_dist(X, Y)
+    return obj_cost + torch.sum(lam * ineq_resid, dim=1) + rho / 2 * (torch.sum(ineq_dist**2, dim=1) + torch.sum(eq_dist**2, dim=1))
+    # return obj_cost + torch.sum(lam * ineq_resid, dim=1) + rho / 2 * (torch.sum(ineq_dist**2, dim=1))
 
-def demand_loss(Pd, Qd, Pd_pred, Qd_pred):
-    demand = torch.cat((Pd, Qd), dim=1)
-    pred_demand = torch.cat((Pd_pred, Qd_pred), dim=1)
-    return torch.sum((pred_demand - demand)**2, dim=1)
 
+
+def dual_loss(data, X, Y, lam, lam_pred, rho):
+    ineq_resid = data.ineq_resid(X, Y)
+    # print(torch.clamp(lam+rho*ineq_resid, min=0).max().item())
+    return torch.norm(lam_pred-torch.clamp(lam+rho*ineq_resid, min=0), dim=1)
+
+
+class Dual_NN(nn.Module):
+    def __init__(self, data, args):
+        super().__init__()
+        self._data = data
+        self._args = args
+        layer_sizes = [data.xdim, self._args['hiddenSize']]
+        # layer_sizes = [data.xdim, 50, 50]
+        layers = reduce(operator.add,
+                        [[nn.Linear(a, b), nn.GELU()]
+                        for a, b in zip(layer_sizes[0:-1], layer_sizes[1:])])
+        layers += [nn.Linear(layer_sizes[-1], data.nineq)]
+
+        for layer in layers:
+            if type(layer) == nn.Linear:
+                nn.init.kaiming_normal_(layer.weight)
+        
+        self.net = nn.Sequential(*layers)
+    
+    def forward(self, x):
+        return nn.ReLU()(self.net(x))
 
 ######### Models
 
@@ -230,7 +313,7 @@ class NNSolver(nn.Module):
         self._args = args
         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
         layers = reduce(operator.add,
-            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ELU(), nn.Dropout(p=0.1)]
+            [[nn.Linear(a,b), nn.ELU(), nn.Dropout(p=0.1)]
                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
         layers += [nn.Linear(layer_sizes[-1], data.output_dim)]
 
@@ -260,13 +343,15 @@ def dict_agg(stats, key, value, op='concat'):
         stats[key] = value
 
 # Modifies stats in place
-def eval_net(data, X, solver_net, args, prefix, stats, lam, rho):
+def eval_net(data, X, solver_net, dual_net, prefix, stats, rho):
     eps_converge = 1e-4
     make_prefix = lambda x: "{}_{}".format(prefix, x)
 
     start_time = time.time()
     Y = solver_net(X)
     end_time = time.time()
+
+    lam = dual_net(X)
 
     dict_agg(stats, make_prefix('time'), end_time - start_time, op='sum')
     dict_agg(stats, make_prefix('loss'), total_loss(data, X, Y, lam, rho).detach().cpu().numpy())
