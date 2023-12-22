@@ -152,13 +152,13 @@ def train_net(data, args, save_dir):
     # # initialize the dual variables and the step size
     # rho = 0.5
     # lam = torch.ones(data.nineq, device=DEVICE) * 0.1
-    T = args['outer_iter']
-    I = args['inner_iter']
     I_warmup = args['inner_warmstart']
     beta = args['beta']
     gamma = args['gamma']
     rho = args['rho']
     lam = torch.ones(data.nineq, device=DEVICE) * args['lambda']
+    T = args['outer_iter']
+    I = args['inner_iter'] - beta
 
     writer = SummaryWriter('runs/{}'.format(save_dir))
 
