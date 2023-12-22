@@ -282,3 +282,40 @@ def deepv_default_args(prob_type):
         raise NotImplementedError
     
     return defaults
+
+
+def deeplde_default_args(prob_type):
+    defaults = {}
+    defaults['simpleVar'] = 100
+    defaults['simpleIneq'] = 50
+    defaults['simpleEq'] = 50
+    defaults['simpleEx'] = 10000
+    defaults['nonconvexVar'] = 100
+    defaults['nonconvexIneq'] = 50
+    defaults['nonconvexEq'] = 50
+    defaults['nonconvexEx'] = 10000
+    defaults['saveAllStats'] = True
+    defaults['resultsSaveFreq'] = 50
+    defaults['useCompl'] = True
+    defaults['corrEps'] = 1e-4
+
+    if prob_type == 'simple':
+        pass
+    elif prob_type == 'nonconvex':
+        pass
+    elif prob_type == 'acopf57':
+        defaults['batchSize'] = 200
+        defaults['lr'] = 1e-3 # 1e-4-118
+        defaults['hiddenSize'] = 200
+        defaults['inner_warmstart'] = 100
+        defaults['inner_iter'] = 25
+        defaults['outer_iter'] = 15
+        defaults['beta'] = 5
+        defaults['rho'] = 0.5
+        defaults['lambda'] = 0.1
+        defaults['gamma'] = 0.01
+
+    else:
+        raise NotImplementedError
+
+    return defaults
