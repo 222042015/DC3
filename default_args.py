@@ -171,10 +171,10 @@ def method_default_args(prob_type):
         defaults['corrEps'] = 1e-4
         defaults['corrLr'] = 1e-7
         defaults['corrMomentum'] = 0.5
-    elif 'acopf' in prob_type:
+    elif prob_type == 'acopf57':
         defaults['epochs'] = 1000
         defaults['batchSize'] = 200
-        defaults['lr'] = 1e-3
+        defaults['lr'] = 1e-3 # 1e-4-118
         defaults['hiddenSize'] = 200
         defaults['softWeight'] = 10             # use 100 if useCompl=False
         defaults['softWeightEqFrac'] = 0.5
@@ -185,7 +185,23 @@ def method_default_args(prob_type):
         defaults['corrTrainSteps'] = 5
         defaults['corrTestMaxSteps'] = 5
         defaults['corrEps'] = 1e-4
-        defaults['corrLr'] = 1e-4           # use 1e-5 if useCompl=False
+        defaults['corrLr'] = 1e-4           # use 1e-5 if useCompl=False, 118
+        defaults['corrMomentum'] = 0.5
+    elif prob_type == 'acopf118':
+        defaults['epochs'] = 1000
+        defaults['batchSize'] = 200
+        defaults['lr'] = 1e-4 # 1e-4-118
+        defaults['hiddenSize'] = 200
+        defaults['softWeight'] = 10             # use 100 if useCompl=False
+        defaults['softWeightEqFrac'] = 0.5
+        defaults['useCompl'] = True
+        defaults['useTrainCorr'] = True
+        defaults['useTestCorr'] = True
+        defaults['corrMode'] = 'partial'    # use 'full' if useCompl=False
+        defaults['corrTrainSteps'] = 5
+        defaults['corrTestMaxSteps'] = 5
+        defaults['corrEps'] = 1e-4
+        defaults['corrLr'] = 1e-5           # use 1e-5 if useCompl=False, 118
         defaults['corrMomentum'] = 0.5
     else:
         raise NotImplementedError
@@ -260,7 +276,7 @@ def deepv_default_args(prob_type):
         defaults['rho_max'] = 10000
         defaults['batchSize'] = 200
         defaults['epochs'] = 2000
-        defaults['lr'] = 5e-4
+        defaults['lr'] = 1e-3
         defaults['hiddenSize'] = 200
     else:
         raise NotImplementedError
