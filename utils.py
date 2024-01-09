@@ -649,6 +649,7 @@ class ACOPFProblem:
         self.nb = ppc['bus'].shape[0]
         self.nslack = len(self.slack)
         self.npv = len(self.pv)
+        assert self.nb == self.nbus
 
         self.quad_costs = torch.tensor(ppc['gencost'][:,4], dtype=torch.get_default_dtype())
         self.lin_costs  = torch.tensor(ppc['gencost'][:,5], dtype=torch.get_default_dtype())
@@ -905,7 +906,8 @@ class ACOPFProblem:
 
     def ineq_partial_grad(self, X, Y):
         eq_jac = self.eq_jac(Y)
-        dynz_dz = -torch.inverse(eq_jac[:, :, self.other_vars]).bmm(eq_jac[:, :, self.partial_vars])
+        # dynz_dz = -torch.inverse(eq_jac[:, :, self.other_vars]).bmm(eq_jac[:, :, self.partial_vars])
+        dynz_dz = -torch.linalg.solve(eq_jac[:, :, self.other_vars], eq_jac[:, :, self.partial_vars])
 
         direct_grad = self.ineq_grad(X, Y)
         indirect_partial_grad = dynz_dz.transpose(1,2).bmm(
@@ -1219,7 +1221,7 @@ class ACOPFProblem:
 #
 #
 #     return PFFunctionFn.apply
-def PFFunction(data, tol=1e-5, bsz=1024, max_iters=10):
+def PFFunction(data, tol=1e-5, bsz=200, max_iters=10):
     class PFFunctionFn(Function):
         @staticmethod
         def forward(ctx, X, Z):
