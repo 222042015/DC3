@@ -17,18 +17,19 @@ def main():
 #   Returns dict of dirnames indexed by exper_name
 def get_experiment_dirs(path_prefix):
     exper_dirs = {}
+    #
+    # eq = 50
+    # for ineq in [10, 30, 50, 70, 90]:
+    #     exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
+    #
+    # ineq = 50
+    # for eq in [10, 30, 70, 90]:
+    #     exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
+    #
+    # exper_dirs['nonconvex'] = 'NonconvexProblem-100-50-50-10000'
 
-    eq = 50
-    for ineq in [10, 30, 50, 70, 90]:
-        exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
-        
-    ineq = 50
-    for eq in [10, 30, 70, 90]:
-        exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
-        
-    exper_dirs['nonconvex'] = 'NonconvexProblem-100-50-50-10000'
-
-    exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
+    # exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
+    exper_dirs['acopf'] = 'ACOPF-118-0-0.5-0.1-0.05-0.05'
 
     for key in exper_dirs.keys():
         exper_dirs[key] = os.path.join(path_prefix, exper_dirs[key])
@@ -44,8 +45,9 @@ def get_status_results(exper_dirs):
     opt_methods = dict([
             ('simple', ['osqp', 'qpth']), ('nonconvex', ['ipopt']), ('acopf', ['pypower'])
     ])
-    nn_baseline_dirs = [('baseline_nn', 'baselineNN'), ('baseline_eq_nn', 'baselineEqNN')]
+    # nn_baseline_dirs = [('baseline_nn', 'baselineNN'), ('baseline_eq_nn', 'baselineEqNN')]
 
+    nn_baseline_dirs = []
     for exper, exper_dir in exper_dirs.items():
         print(exper)
         

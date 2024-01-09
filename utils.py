@@ -621,16 +621,20 @@ class ACOPFProblem:
                               (p_g - p_d) + (q_g - q_d)i = diag(vmag e^{i*vang}) conj(Y) (vmag e^{-i*vang})
     """
 
-    def __init__(self, filename, valid_frac=0.0833, test_frac=0.0833):
-        data = spio.loadmat(filename)
-        self.nbus = int(filename.split('_')[-1][4:-4])
-
-        ## Define useful power network quantities and indices
-        ppc = CASE_FNS[self.nbus]()
+    # def __init__(self, filename, valid_frac=0.0833, test_frac=0.0833):
+    def __init__(self, data, valid_frac=0.0833, test_frac=0.0833):
+        # data = spio.loadmat(filename)
+        ppc = data['ppc']
         self.ppc = ppc
 
         self.genbase = ppc['gen'][:, idx_gen.MBASE]
         self.baseMVA = ppc['baseMVA']
+
+        demand = data['Dem'] / self.baseMVA
+        gen = data['Gen'] / self.genbase
+        voltage = data['Vol']
+
+        self.nbus = voltage.shape[1]
 
         self.slack = np.where(ppc['bus'][:, idx_bus.BUS_TYPE] == 3)[0]
         self.pv = np.where(ppc['bus'][:, idx_bus.BUS_TYPE] == 2)[0]
@@ -644,11 +648,14 @@ class ACOPFProblem:
         self.pv_ = np.array([np.where(x == self.spv)[0][0] for x in self.pv])
 
         self.ng = ppc['gen'].shape[0]
+        self.nb = ppc['bus'].shape[0]
         self.nslack = len(self.slack)
         self.npv = len(self.pv)
 
         self.quad_costs = torch.tensor(ppc['gencost'][:,4], dtype=torch.get_default_dtype())
         self.lin_costs  = torch.tensor(ppc['gencost'][:,5], dtype=torch.get_default_dtype())
+        # self.quad_costs = torch.tensor(ppc['gencost'][:,4])
+        # self.lin_costs  = torch.tensor(ppc['gencost'][:,5])
         self.const_cost = ppc['gencost'][:,6].sum()
 
         self.pmax = torch.tensor(ppc['gen'][:,idx_gen.PMAX] / self.genbase, dtype=torch.get_default_dtype())
@@ -668,10 +675,10 @@ class ACOPFProblem:
         self.Ybusr = torch.tensor(np.real(Ybus), dtype=torch.get_default_dtype())
         self.Ybusi = torch.tensor(np.imag(Ybus), dtype=torch.get_default_dtype())
 
-        ## Define optimization problem input and output variables
-        demand = data['Dem'].T / self.baseMVA
-        gen =  data['Gen'].T / self.genbase
-        voltage = data['Vol'].T
+        # ## Define optimization problem input and output variables
+        # demand = data['Dem'].T / self.baseMVA
+        # gen =  data['Gen'].T / self.genbase
+        # voltage = data['Vol'].T
 
         X = np.concatenate([np.real(demand), np.imag(demand)], axis=1)
         Y = np.concatenate([np.real(gen), np.imag(gen), np.abs(voltage), np.angle(voltage)], axis=1)
