@@ -621,9 +621,7 @@ class ACOPFProblem:
                               (p_g - p_d) + (q_g - q_d)i = diag(vmag e^{i*vang}) conj(Y) (vmag e^{-i*vang})
     """
 
-    # def __init__(self, filename, valid_frac=0.0833, test_frac=0.0833):
-    def __init__(self, data, valid_frac=0.0833, test_frac=0.0833):
-        # data = spio.loadmat(filename)
+    def __init__(self, data, train_num=1000, valid_num=100, test_num=100):
         ppc = data['ppc']
         self.ppc = ppc
 
@@ -708,9 +706,12 @@ class ACOPFProblem:
 
 
         ## Define train/valid/test split
-        self._valid_frac = valid_frac
-        self._test_frac = test_frac
-
+        # self._valid_frac = valid_frac
+        # self._test_frac = test_frac
+        self._train_num = train_num
+        self._valid_num = valid_num
+        self._test_num = test_num
+        assert self.train_num + self.valid_num + self.test_num <= self._num
 
         ## Define variables and indices for "partial completion" neural network
 
@@ -742,10 +743,10 @@ class ACOPFProblem:
 
 
     def __str__(self):
-        return 'ACOPF-{}-{}-{}-{}-{}-{}'.format(
+        return 'ACOPF-{}-{}-{}-{}-{}-{}-{}'.format(
             self.nbus,
             self.EPS_INTERIOR, self.CorrCoeff, self.MaxChangeLoad,
-            self.valid_frac, self.test_frac)
+            self.train_num, self.valid_num, self.test_num)
 
     @property
     def X(self):
@@ -792,40 +793,38 @@ class ACOPFProblem:
         return self._nknowns
 
     @property
-    def valid_frac(self):
-        return self._valid_frac
+    def valid_num(self):
+        return self._valid_num
 
     @property
-    def test_frac(self):
-        return self._test_frac
+    def test_num(self):
+        return self._test_num
 
     @property
-    def train_frac(self):
-        return 1 - self.valid_frac - self.test_frac
+    def train_num(self):
+        return self._train_num
 
     @property
     def trainX(self):
-        return self.X[:int(self.num * self.train_frac)]
-
+        return self.X[:self.train_num]
     @property
     def validX(self):
-        return self.X[int(self.num * self.train_frac):int(self.num * (self.train_frac + self.valid_frac))]
+        return self.X[self.train_num:self.train_num+self.valid_num]
 
     @property
     def testX(self):
-        return self.X[int(self.num * (self.train_frac + self.valid_frac)):]
+        return self.X[self.train_num+self.valid_num:self.train_num+self.valid_num+self.test_num]
 
     @property
     def trainY(self):
-        return self.Y[:int(self.num*self.train_frac)]
-
+        return self.Y[:self.train_num]
     @property
     def validY(self):
-        return self.Y[int(self.num*self.train_frac):int(self.num*(self.train_frac + self.valid_frac))]
+        return self.Y[self.train_num:self.train_num+self.valid_num]
 
     @property
     def testY(self):
-        return self.Y[int(self.num*(self.train_frac + self.valid_frac)):]
+        return self.Y[self.train_num+self.valid_num:self.train_num+self.valid_num+self.test_num]
 
     @property
     def device(self):
@@ -1020,7 +1019,7 @@ class ACOPFProblem:
         return PFFunction(self)(X, Y_partial)
 
 
-    def opt_solve(self, X, solver_type='pypower', tol=1e-4):
+    def opt_solve(self, X, solver_type='pypower', tol=1e-5):
         X_np = X.detach().cpu().numpy()
 
         ppc = self.ppc
@@ -1030,7 +1029,8 @@ class ACOPFProblem:
         ppc['bus'][:,idx_bus.VMAX] = ppc['bus'][:,idx_bus.VMAX] - self.EPS_INTERIOR
 
         # Solver options
-        ppopt = ppoption.ppoption(OPF_ALG=560, VERBOSE=0, OPF_VIOLATION=tol)  # MIPS PDIPM
+        # ppopt = ppoption.ppoption(OPF_ALG=560, VERBOSE=0, OPF_VIOLATION=tol)  # MIPS PDIPM
+        ppopt = ppoption.ppoption(OPF_ALG=560, VERBOSE=0, OPF_VIOLATION=tol, PDIPM_MAX_IT=100)
 
         Y = []
         total_time = 0
@@ -1053,7 +1053,7 @@ class ACOPFProblem:
         return np.array(Y), total_time, total_time/len(X_np)
 
 
-def PFFunction(data, tol=1e-5, bsz=200, max_iters=50):
+def PFFunction(data, tol=1e-5, bsz=200, max_iters=10):
     class PFFunctionFn(Function):
         @staticmethod
         def forward(ctx, X, Z):

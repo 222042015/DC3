@@ -12,11 +12,11 @@ addpath(genpath('/Users/xiongjinxin/matpower7.1'));
 clearvars;
 clc;
 warning off;
-my_model = pglib_opf_case2000_goc;
+my_model = pglib_opf_case39_epri;
 % file_name = 'data/ACOPF_01_variation/FeasiblePairs_case118.mat';
 % case_name = 'data/ACOPF_01_variation/case118.mat';
-file_name = '/Users/xiongjinxin/A-xjx/SRIBD/DC3/datasets/acopf1/matlab_datasets/data/ACOPF_01_variation/FeasiblePairs_case2000.mat';
-case_name = '/Users/xiongjinxin/A-xjx/SRIBD/DC3/datasets/acopf1/matlab_datasets/data/ACOPF_01_variation/case2000.mat';
+file_name = '/Users/xiongjinxin/A-xjx/SRIBD/DC3/datasets/acopf/matlab_datasets/data/ACOPF_01_variation/FeasiblePairs_case39.mat';
+case_name = '/Users/xiongjinxin/A-xjx/SRIBD/DC3/datasets/acopf/matlab_datasets/data/ACOPF_01_variation/case39.mat';
 [i2e, my_model.bus, my_model.gen, my_model.branch] = ext2int(my_model.bus, my_model.gen, my_model.branch); 
 [C, ia, ic] = unique(my_model.gen(:,1), 'rows');
 my_model.gen = my_model.gen(ia,:);
@@ -62,7 +62,7 @@ LoadBuses = find(BaseLoadP>0 | BaseLoadP<0);
 %% Generate load samples
 disp('Generating load samples');
 % NSamples   = 30000;
-NSamples = 1200;
+NSamples = 2000;
 MaxChangeLoad = 0.1;
 
 CorrCoeff  = 0.5;

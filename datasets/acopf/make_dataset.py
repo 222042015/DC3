@@ -6,8 +6,8 @@ import scipy.io
 sys.path.insert(1, os.path.join(sys.path[0], os.pardir, os.pardir))
 # from utils import ACOPFProblem
 # [3,5,24,30,73, 118, 200, 300, 500, 1354, 2000
-nbus = 118
-num = 1200
+nbus = 300
+num = 2000
 
 data = scipy.io.loadmat('./datasets/acopf/matlab_datasets/data/ACOPF_01_variation/FeasiblePairs_case{}.mat'.format(nbus))
 ppc_mat = scipy.io.loadmat('./datasets/acopf/matlab_datasets/data/ACOPF_01_variation/case{}.mat'.format(nbus))

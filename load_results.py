@@ -29,7 +29,7 @@ def get_experiment_dirs(path_prefix):
     # exper_dirs['nonconvex'] = 'NonconvexProblem-100-50-50-10000'
 
     # exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
-    exper_dirs['acopf'] = 'ACOPF-118-0-0.5-0.1-0.05-0.05'
+    exper_dirs['acopf'] = 'ACOPF-300-0-0.5-0.1-1000-100-100'
 
     for key in exper_dirs.keys():
         exper_dirs[key] = os.path.join(path_prefix, exper_dirs[key])
