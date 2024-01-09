@@ -84,7 +84,7 @@ def main():
     #             pass
     # data._device = DEVICE
     filepath = os.path.join('datasets', 'acopf', 'acopf_{}_{}_{}_dataset'.format(
-        2023, 300, 2000))
+        2023, 39, 2000))
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
     data = ACOPFProblem(dataset) #, valid_frac=0.05, test_frac=0.05)
