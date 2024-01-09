@@ -1,9 +1,3 @@
-try:
-    import waitGPU
-    waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
-except ImportError:
-    pass
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
