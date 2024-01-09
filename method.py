@@ -21,8 +21,8 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='acopf57',
-        choices=['simple', 'nonconvex', 'acopf57', 'acopf118'], help='problem type')
+    parser.add_argument('--probType', type=str, default='acopf118'
+                        , help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -86,32 +86,20 @@ def main():
 
     # Load data, and put on GPU if needed
     prob_type = args['probType']
-    # if prob_type == 'simple':
-    #     filepath = os.path.join('datasets', 'simple', "random_simple_dataset_var{}_ineq{}_eq{}_ex{}".format(
-    #         args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
-    # elif prob_type == 'nonconvex':
-    #     filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
-    #         args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
-    # elif prob_type == 'acopf57':
-    #     filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
-    # else:
-    #     raise NotImplementedError
+    if prob_type == 'simple':
+        filepath = os.path.join('datasets', 'simple', "random_simple_dataset_var{}_ineq{}_eq{}_ex{}".format(
+            args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
+    elif prob_type == 'nonconvex':
+        filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
+            args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
+    elif 'acopf' in prob_type:
+        filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+    else:
+        raise NotImplementedError
 
-    # with open(filepath, 'rb') as f:
-    #     data = pickle.load(f)
-    # for attr in dir(data):
-    #     var = getattr(data, attr)
-    #     if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
-    #         try:
-    #             setattr(data, attr, var.to(DEVICE))
-    #         except AttributeError:
-    #             pass
-    # data._device = DEVICE
-    filepath = os.path.join('datasets', 'acopf', 'acopf_{}_{}_{}_dataset'.format(
-        2023, 118, 20000))
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
-    data = ACOPFProblem(dataset) #, valid_frac=0.05, test_frac=0.05)
+    data = ACOPFProblem(dataset, train_num=100, valid_num=5, test_num=5) #, valid_frac=0.05, test_frac=0.05)
     data._device = DEVICE
     print(DEVICE)
     for attr in dir(data):

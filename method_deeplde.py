@@ -14,7 +14,7 @@ from setproctitle import setproctitle
 import os
 import argparse
 
-from utils import my_hash, str_to_bool
+from utils import my_hash, str_to_bool, ACOPFProblem
 import default_args
 
 from torch.utils.tensorboard import SummaryWriter
@@ -23,8 +23,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='DeepLDE')
-    parser.add_argument('--probType', type=str, default='acopf57',help='problem type')
-
+    parser.add_argument('--probType', type=str, default='acopf118',help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -76,14 +75,13 @@ def main():
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
-    # defaults = default_args.method_default_args(args['probType'])
     defaults = default_args.deeplde_default_args(args['probType'])
     for key in defaults.keys():
         if args[key] is None:
             args[key] = defaults[key]
     print(args)
 
-    setproctitle('DC3-{}'.format(args['probType']))
+    setproctitle('DeepLDE-{}'.format(args['probType']))
 
     # Load data, and put on GPU if needed
     prob_type = args['probType']
@@ -93,36 +91,30 @@ def main():
     elif prob_type == 'nonconvex':
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
-    # elif prob_type == 'acopf57':
-    elif prob_type[:5] == 'acopf':
-        # filepath = os.path.join('datasets', 'acopf', prob_type + '_dataset')
+    elif 'acopf' in prob_type:
         if args['useLU']:
-            filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset_lu')
+            filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
         else:
-            filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
+            NotImplementedError
     else:
         raise NotImplementedError
     # read the data and transfer to GPU
     with open(filepath, 'rb') as f:
-        data = pickle.load(f)
+        dataset = pickle.load(f)
+    
+    data = ACOPFProblem(dataset, train_num=1000, valid_num=100, test_num=100) #, valid_frac=0.05, test_frac=0.05)
+    data._device = DEVICE
+    print(DEVICE)
     for attr in dir(data):
         var = getattr(data, attr)
-        if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+        if torch.is_tensor(var):
             try:
                 setattr(data, attr, var.to(DEVICE))
             except AttributeError:
                 pass
-    data._device = DEVICE
 
-    # save_dir = os.path.join('results', str(data), 'method_deeplde', my_hash(str(sorted(list(args.items())))),
-    #     str(time.time()).replace('.', '-'))
-    if args['useLU']:
-        save_dir = os.path.join('results', str(data), 'method_deeplde_lu', my_hash(str(sorted(list(args.items())))),
-            str(time.time()).replace('.', '-'))
-    else:
-        save_dir = os.path.join('results', str(data), 'method_deeplde', my_hash(str(sorted(list(args.items())))),
-            str(time.time()).replace('.', '-'))
-        
+    save_dir = os.path.join('results', str(data), 'method_deeplde', my_hash(str(sorted(list(args.items())))),
+        str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     with open(os.path.join(save_dir, 'args.dict'), 'wb') as f:
@@ -149,15 +141,6 @@ def train_net(data, args, save_dir):
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
 
     stats = {}
-    # T = 42 # total outer iterations
-    # I = 25 # total innter iterations
-    # I_warmup = 100
-    # beta = 5 # increase the number of inner interations after each outer iteration
-    # gamma = 0.01 # decrease the step size for the dual update every outer iteration
-
-    # # initialize the dual variables and the step size
-    # rho = 0.5
-    # lam = torch.ones(data.nineq, device=DEVICE) * 0.1
     I_warmup = args['inner_warmstart']
     beta = args['beta']
     gamma = args['gamma']
@@ -166,7 +149,7 @@ def train_net(data, args, save_dir):
     T = args['outer_iter']
     I = args['inner_iter'] - beta
 
-    writer = SummaryWriter('runs/{}'.format(save_dir))
+    # writer = SummaryWriter('runs/{}'.format(save_dir))
 
     step = 0
     for t in range(T+1):
@@ -212,11 +195,11 @@ def train_net(data, args, save_dir):
                     np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
 
             # write to tensorboard
-            writer.add_scalar('train_loss', np.mean(epoch_stats['train_loss']), step)
-            writer.add_scalar('valid_eval', np.mean(epoch_stats['valid_eval']), step)
-            writer.add_scalar('valid_ineq_max', np.mean(epoch_stats['valid_ineq_max']), step)
-            writer.add_scalar('valid_ineq_mean', np.mean(epoch_stats['valid_ineq_mean']), step)
-            writer.add_scalar('valid_eq_max', np.mean(epoch_stats['valid_eq_max']), step)
+            # writer.add_scalar('train_loss', np.mean(epoch_stats['train_loss']), step)
+            # writer.add_scalar('valid_eval', np.mean(epoch_stats['valid_eval']), step)
+            # writer.add_scalar('valid_ineq_max', np.mean(epoch_stats['valid_ineq_max']), step)
+            # writer.add_scalar('valid_ineq_mean', np.mean(epoch_stats['valid_ineq_mean']), step)
+            # writer.add_scalar('valid_eq_max', np.mean(epoch_stats['valid_eq_max']), step)
 
             if args['saveAllStats']:
                 if t == 0 and i == 0:
@@ -348,7 +331,7 @@ class NNSolver(nn.Module):
         if self._args['useCompl']:
             if 'acopf' in self._args['probType']:
                 out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-            return self._data.complete_partial(x, out)[0]
+            return self._data.complete_partial(x, out)
         else:
             return self._data.process_output(x, out)
 
