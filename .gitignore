@@ -14,3 +14,4 @@
 results/
 datasets/acopf/acopf118_dataset
 datasets/acopf/matlab_datasets/FeasiblePairs_Case118.mat
+logs/
