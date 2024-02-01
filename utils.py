@@ -870,32 +870,6 @@ class ACOPFProblem:
             react_resid
         ], dim=1)
         return resids
-    
-    # def eq_resid2(self, X, Y):
-    #     time0 = time.time()
-    #     ppc_tmp = deepcopy(self.ppc)
-    #     pg, qg, vm, va = self.get_yvars(Y)
-    #     pd = X[:, :self.nbus] * self.baseMVA
-    #     qd = X[:, self.nbus:] * self.baseMVA
-
-    #     ppc_tmp['bus'][:, idx_bus.VM] = vm
-    #     ppc_tmp['bus'][:, idx_bus.VA] = np.rad2deg(va)
-    #     ppc_tmp['gen'][:, idx_gen.PG] = pg * self.genbase
-    #     ppc_tmp['gen'][:, idx_gen.QG] = qg * self.genbase
-    #     ppc_tmp['bus'][:, idx_bus.PD] = pd
-    #     ppc_tmp['bus'][:, idx_bus.QD] = qd
-
-    #     V = np.squeeze((vm * np.exp(1j * va)).detach().cpu().numpy())   
-
-    #     # the bus id should  start from 0
-    #     Sbus = makeSbus(self.baseMVA, ppc_tmp['bus'], ppc_tmp['gen'])
-    #     Ybus = self.data['Ybus']
-
-    #     resid = Sbus - V * np.conj(np.squeeze(np.array(Ybus @ V)))
-    #     resid = torch.tensor(resid).unsqueeze(0)
-    #     resids = torch.cat([torch.real(resid), torch.imag(resid)], dim=1)
-    #     print('eq_resid2 time: ', time.time() - time0)
-    #     return resids
 
     def ineq_resid(self, X, Y):
         pg, qg, vm, va = self.get_yvars(Y)
@@ -1110,7 +1084,7 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=50):
                     jac_full = data.eq_jac(Y_b)
                     jac = jac_full[:, keep_constr, :]
                     jac = jac[:, :, newton_guess_inds]
-                    
+
                     """Linear system"""
                     delta = torch.linalg.solve(jac, gy.unsqueeze(-1)).squeeze(-1)
 
