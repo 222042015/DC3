@@ -15,8 +15,8 @@ from copy import deepcopy
 import scipy.io as spio
 import time
 
-from pypower.api import case57
-from pypower.api import opf, makeYbus
+from pypower.api import case57, case300
+from pypower.api import opf, makeYbus, savecase, ext2int, makeSbus, newtonpf
 from pypower import idx_bus, idx_gen, ppoption
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -624,15 +624,20 @@ class ACOPFProblem:
     def __init__(self, data, train_num=1000, valid_num=100, test_num=100):
         ppc = data['ppc']
         self.ppc = ppc
+        self.ppc['bus'][:, idx_bus.BUS_I] -= 1
+        self.ppc['gen'][:, idx_gen.GEN_BUS] -= 1
+        self.ppc['branch'][:, [0, 1]] -= 1
 
         self.genbase = ppc['gen'][:, idx_gen.MBASE]
         self.baseMVA = ppc['baseMVA']
 
         demand = data['Dem'] / self.baseMVA
         gen = data['Gen'] / self.genbase
-        voltage = data['Vol']
+        self.voltage = data['Vol']
 
-        self.nbus = voltage.shape[1]
+        self.data = data
+
+        self.nbus = self.voltage.shape[1]
 
         self.slack = np.where(ppc['bus'][:, idx_bus.BUS_TYPE] == 3)[0]
         self.pv = np.where(ppc['bus'][:, idx_bus.BUS_TYPE] == 2)[0]
@@ -666,21 +671,19 @@ class ACOPFProblem:
         self.slackva = torch.tensor([np.deg2rad(ppc['bus'][self.slack, idx_bus.VA])], 
             dtype=torch.get_default_dtype()).squeeze(-1)
 
-        ppc2 = deepcopy(ppc)
-        ppc2['bus'][:,0] -= 1
-        ppc2['branch'][:,[0,1]] -= 1
-        Ybus, _, _ = makeYbus(self.baseMVA, ppc2['bus'], ppc2['branch'])
-        Ybus = Ybus.todense()
-        self.Ybusr = torch.tensor(np.real(Ybus), dtype=torch.get_default_dtype())
-        self.Ybusi = torch.tensor(np.imag(Ybus), dtype=torch.get_default_dtype())
+        # ppc2 = deepcopy(ppc)
+        # ppc2['bus'][:,0] -= 1
+        # ppc2['branch'][:,[0,1]] -= 1
+        # Ybus, _, _ = makeYbus(self.baseMVA, ppc2['bus'], ppc2['branch'])
+        # self.Ybus = Ybus.todense()
+        self.Ybus = data['Ybus']
+        self.Ybus = self.Ybus.todense()
 
-        # ## Define optimization problem input and output variables
-        # demand = data['Dem'].T / self.baseMVA
-        # gen =  data['Gen'].T / self.genbase
-        # voltage = data['Vol'].T
+        self.Ybusr = torch.tensor(np.real(self.Ybus), dtype=torch.get_default_dtype())
+        self.Ybusi = torch.tensor(np.imag(self.Ybus), dtype=torch.get_default_dtype())
 
         X = np.concatenate([np.real(demand), np.imag(demand)], axis=1)
-        Y = np.concatenate([np.real(gen), np.imag(gen), np.abs(voltage), np.angle(voltage)], axis=1)
+        Y = np.concatenate([np.real(gen), np.imag(gen), np.abs(self.voltage), np.angle(self.voltage)], axis=1)
         feas_mask =  ~np.isnan(Y).any(axis=1)
 
         self._X = torch.tensor(X[feas_mask], dtype=torch.get_default_dtype())
@@ -745,6 +748,8 @@ class ACOPFProblem:
 
         ### For Pytorch
         self._device = None
+        self.eq_resid2(self.X[0].unsqueeze(0), self.Y[0].unsqueeze(0))
+        print(self.eq_resid(self.X[0].unsqueeze(0), self.Y[0].unsqueeze(0)).abs().max())
 
 
     def __str__(self):
@@ -857,17 +862,22 @@ class ACOPFProblem:
         vi = vm*torch.sin(va)
 
         ## power balance equations
-        tmp1 = vr@self.Ybusr - vi@self.Ybusi
-        tmp2 = -vr@self.Ybusi - vi@self.Ybusr
+        # tmp1 = vr@self.Ybusr - vi@self.Ybusi
+        # tmp2 = -vr@self.Ybusi - vi@self.Ybusr
+        # need to change from @ to torch.matmul, otherwise there will be an error
+        # the original formulation use @, but the Ybus is nonlonger symetric for case 300, better to use matmul and stick to the original formula
+
+        tmp1 = torch.squeeze(torch.matmul(self.Ybusr, vr.unsqueeze(-1)) - torch.matmul(self.Ybusi, vi.unsqueeze(-1)))
+        tmp2 = -torch.squeeze(torch.matmul(self.Ybusi, vr.unsqueeze(-1)) + torch.matmul(self.Ybusr, vi.unsqueeze(-1)))
 
         # real power
         pg_expand = torch.zeros(pg.shape[0], self.nbus, device=self.device)
-        pg_expand[:, self.spv] = pg
+        pg_expand[:, self.spv] = pg 
         real_resid = (pg_expand - X[:, :self.nbus]) - (vr*tmp1 - vi*tmp2)
 
         # reactive power
         qg_expand = torch.zeros(qg.shape[0], self.nbus, device=self.device)
-        qg_expand[:, self.spv] = qg
+        qg_expand[:, self.spv] = qg 
         react_resid = (qg_expand - X[:, self.nbus:]) - (vr*tmp2 + vi*tmp1)
 
         ## all residuals
@@ -877,6 +887,29 @@ class ACOPFProblem:
         ], dim=1)
         
         return resids
+    
+    def eq_resid2(self, X, Y):
+        ppc_tmp = deepcopy(self.ppc)
+        pg, qg, vm, va = self.get_yvars(Y)
+        pd = X[:, :self.nbus] * self.baseMVA
+        qd = X[:, self.nbus:] * self.baseMVA
+
+        ppc_tmp['bus'][:, idx_bus.VM] = vm
+        ppc_tmp['bus'][:, idx_bus.VA] = np.rad2deg(va)
+        ppc_tmp['gen'][:, idx_gen.PG] = pg * self.genbase
+        ppc_tmp['gen'][:, idx_gen.QG] = qg * self.genbase
+        ppc_tmp['bus'][:, idx_bus.PD] = pd
+        ppc_tmp['bus'][:, idx_bus.QD] = qd
+
+        V = np.squeeze((vm * np.exp(1j * va)).detach().cpu().numpy())   
+
+        # the bus id should  start from 0
+        Sbus = makeSbus(self.baseMVA, ppc_tmp['bus'], ppc_tmp['gen'])
+        Ybus = self.data['Ybus']
+
+        resid = Sbus - V * np.conj(np.squeeze(np.array(Ybus @ V)))
+        print(resid.max())
+        return resid
 
     def ineq_resid(self, X, Y):
         pg, qg, vm, va = self.get_yvars(Y)
@@ -1013,20 +1046,25 @@ class ACOPFProblem:
     def complete_partial(self, X, Z):
         Y_partial = torch.zeros(Z.shape, device=self.device)
 
-        # Re-scale real powers
-        Y_partial[:, self.pg_pv_zidx] = Z[:, self.pg_pv_zidx] * self.pmax[1:] + \
-             (1-Z[:, self.pg_pv_zidx]) * self.pmin[1:]
+        # # Re-scale real powers
+        # Y_partial[:, self.pg_pv_zidx] = Z[:, self.pg_pv_zidx] * self.pmax[1:] + \
+        #      (1-Z[:, self.pg_pv_zidx]) * self.pmin[1:]
         
-        # Re-scale real parts of voltages
-        Y_partial[:, self.vm_spv_zidx] = Z[:, self.vm_spv_zidx] * self.vmax[self.spv] + \
-            (1-Z[:, self.vm_spv_zidx]) * self.vmin[self.spv]
+        # # Re-scale real parts of voltages
+        # Y_partial[:, self.vm_spv_zidx] = Z[:, self.vm_spv_zidx] * self.vmax[self.spv] + \
+        #     (1-Z[:, self.vm_spv_zidx]) * self.vmin[self.spv]
+
+        Y_partial[:, self.pg_pv_zidx] = Z[:, self.pg_pv_zidx] * (self.pmax[self.pv_] - self.pmin[self.pv_]) + self.pmin[
+            self.pv_]
+        # Re-scale voltage magnitudes
+        Y_partial[:, self.vm_spv_zidx] = Z[:, self.vm_spv_zidx] * (self.vmax[self.spv] - self.vmin[self.spv]) + \
+                                        self.vmin[self.spv]
 
         return PFFunction(self)(X, Y_partial)
 
 
-    def opt_solve(self, X, solver_type='pypower', tol=1e-5):
+    def opt_solve(self, X, solver_type='pypower', tol=1e-6):
         X_np = X.detach().cpu().numpy()
-
         ppc = self.ppc
 
         # Set reduced voltage bounds if applicable
@@ -1034,8 +1072,7 @@ class ACOPFProblem:
         ppc['bus'][:,idx_bus.VMAX] = ppc['bus'][:,idx_bus.VMAX] - self.EPS_INTERIOR
 
         # Solver options
-        # ppopt = ppoption.ppoption(OPF_ALG=560, VERBOSE=0, OPF_VIOLATION=tol)  # MIPS PDIPM
-        ppopt = ppoption.ppoption(OPF_ALG=560, VERBOSE=0, OPF_VIOLATION=tol, PDIPM_MAX_IT=100)
+        ppopt = ppoption.ppoption(OPF_ALG=560, VERBOSE=0, OPF_VIOLATION=tol)  # MIPS PDIPM
 
         Y = []
         total_time = 0
@@ -1046,6 +1083,7 @@ class ACOPFProblem:
 
             start_time = time.time()
             my_result = opf(ppc, ppopt)
+            # printpf(my_result)
             end_time = time.time()
             total_time += (end_time - start_time)
 
@@ -1057,7 +1095,7 @@ class ACOPFProblem:
 
         return np.array(Y), total_time, total_time/len(X_np)
 
-def PFFunction(data, tol=1e-5, bsz=200, max_iters=10):
+def PFFunction(data, tol=1e-5, bsz=200, max_iters=50):
     class PFFunctionFn(Function):
         @staticmethod
         def forward(ctx, X, Z):
