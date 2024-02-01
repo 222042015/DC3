@@ -624,6 +624,7 @@ class ACOPFProblem:
     def __init__(self, data, train_num=1000, valid_num=100, test_num=100):
         ppc = data['ppc']
         self.ppc = ppc
+        # reset the bus index to start from 0
         self.ppc['bus'][:, idx_bus.BUS_I] -= 1
         self.ppc['gen'][:, idx_gen.GEN_BUS] -= 1
         self.ppc['branch'][:, [0, 1]] -= 1
@@ -658,8 +659,6 @@ class ACOPFProblem:
 
         self.quad_costs = torch.tensor(ppc['gencost'][:,4], dtype=torch.get_default_dtype())
         self.lin_costs  = torch.tensor(ppc['gencost'][:,5], dtype=torch.get_default_dtype())
-        # self.quad_costs = torch.tensor(ppc['gencost'][:,4])
-        # self.lin_costs  = torch.tensor(ppc['gencost'][:,5])
         self.const_cost = ppc['gencost'][:,6].sum()
 
         self.pmax = torch.tensor(ppc['gen'][:,idx_gen.PMAX] / self.genbase, dtype=torch.get_default_dtype())
@@ -671,14 +670,9 @@ class ACOPFProblem:
         self.slackva = torch.tensor([np.deg2rad(ppc['bus'][self.slack, idx_bus.VA])], 
             dtype=torch.get_default_dtype()).squeeze(-1)
 
-        # ppc2 = deepcopy(ppc)
-        # ppc2['bus'][:,0] -= 1
-        # ppc2['branch'][:,[0,1]] -= 1
-        # Ybus, _, _ = makeYbus(self.baseMVA, ppc2['bus'], ppc2['branch'])
-        # self.Ybus = Ybus.todense()
+        # retrieve the Ybus matrix from the input data
         self.Ybus = data['Ybus']
         self.Ybus = self.Ybus.todense()
-
         self.Ybusr = torch.tensor(np.real(self.Ybus), dtype=torch.get_default_dtype())
         self.Ybusi = torch.tensor(np.imag(self.Ybus), dtype=torch.get_default_dtype())
 
@@ -725,10 +719,6 @@ class ACOPFProblem:
         self._partial_unknown_vars = np.concatenate([self.pg_start_yidx + self.pv_, self.vm_start_yidx + self.spv])
 
         # initial values for solver
-        # self.vm_init = ppc['bus'][:, idx_bus.VM]
-        # self.va_init = np.deg2rad(ppc['bus'][:, idx_bus.VA])
-        # self.pg_init = ppc['gen'][:, idx_gen.PG] / self.genbase
-        # self.qg_init = ppc['gen'][:, idx_gen.QG] / self.genbase
         self.pg_init = torch.tensor(ppc['gen'][:, idx_gen.PG] / self.genbase)
         self.qg_init = torch.tensor(ppc['gen'][:, idx_gen.QG] / self.genbase)
         self.vm_init = torch.tensor(ppc['bus'][:, idx_bus.VM])
@@ -748,8 +738,8 @@ class ACOPFProblem:
 
         ### For Pytorch
         self._device = None
-        self.eq_resid2(self.X[0].unsqueeze(0), self.Y[0].unsqueeze(0))
-        print(self.eq_resid(self.X[0].unsqueeze(0), self.Y[0].unsqueeze(0)).abs().max())
+        # print(self.eq_resid(self.X[0].unsqueeze(0), self.Y[0].unsqueeze(0)).abs().max())
+        # print(self.eq_resid2(self.X[0].unsqueeze(0), self.Y[0].unsqueeze(0)).abs().max())
 
 
     def __str__(self):
@@ -861,12 +851,6 @@ class ACOPFProblem:
         vr = vm*torch.cos(va)
         vi = vm*torch.sin(va)
 
-        ## power balance equations
-        # tmp1 = vr@self.Ybusr - vi@self.Ybusi
-        # tmp2 = -vr@self.Ybusi - vi@self.Ybusr
-        # need to change from @ to torch.matmul, otherwise there will be an error
-        # the original formulation use @, but the Ybus is nonlonger symetric for case 300, better to use matmul and stick to the original formula
-
         tmp1 = torch.squeeze(torch.matmul(self.Ybusr, vr.unsqueeze(-1)) - torch.matmul(self.Ybusi, vi.unsqueeze(-1)))
         tmp2 = -torch.squeeze(torch.matmul(self.Ybusi, vr.unsqueeze(-1)) + torch.matmul(self.Ybusr, vi.unsqueeze(-1)))
 
@@ -885,31 +869,33 @@ class ACOPFProblem:
             real_resid,
             react_resid
         ], dim=1)
-        
         return resids
     
-    def eq_resid2(self, X, Y):
-        ppc_tmp = deepcopy(self.ppc)
-        pg, qg, vm, va = self.get_yvars(Y)
-        pd = X[:, :self.nbus] * self.baseMVA
-        qd = X[:, self.nbus:] * self.baseMVA
+    # def eq_resid2(self, X, Y):
+    #     time0 = time.time()
+    #     ppc_tmp = deepcopy(self.ppc)
+    #     pg, qg, vm, va = self.get_yvars(Y)
+    #     pd = X[:, :self.nbus] * self.baseMVA
+    #     qd = X[:, self.nbus:] * self.baseMVA
 
-        ppc_tmp['bus'][:, idx_bus.VM] = vm
-        ppc_tmp['bus'][:, idx_bus.VA] = np.rad2deg(va)
-        ppc_tmp['gen'][:, idx_gen.PG] = pg * self.genbase
-        ppc_tmp['gen'][:, idx_gen.QG] = qg * self.genbase
-        ppc_tmp['bus'][:, idx_bus.PD] = pd
-        ppc_tmp['bus'][:, idx_bus.QD] = qd
+    #     ppc_tmp['bus'][:, idx_bus.VM] = vm
+    #     ppc_tmp['bus'][:, idx_bus.VA] = np.rad2deg(va)
+    #     ppc_tmp['gen'][:, idx_gen.PG] = pg * self.genbase
+    #     ppc_tmp['gen'][:, idx_gen.QG] = qg * self.genbase
+    #     ppc_tmp['bus'][:, idx_bus.PD] = pd
+    #     ppc_tmp['bus'][:, idx_bus.QD] = qd
 
-        V = np.squeeze((vm * np.exp(1j * va)).detach().cpu().numpy())   
+    #     V = np.squeeze((vm * np.exp(1j * va)).detach().cpu().numpy())   
 
-        # the bus id should  start from 0
-        Sbus = makeSbus(self.baseMVA, ppc_tmp['bus'], ppc_tmp['gen'])
-        Ybus = self.data['Ybus']
+    #     # the bus id should  start from 0
+    #     Sbus = makeSbus(self.baseMVA, ppc_tmp['bus'], ppc_tmp['gen'])
+    #     Ybus = self.data['Ybus']
 
-        resid = Sbus - V * np.conj(np.squeeze(np.array(Ybus @ V)))
-        print(resid.max())
-        return resid
+    #     resid = Sbus - V * np.conj(np.squeeze(np.array(Ybus @ V)))
+    #     resid = torch.tensor(resid).unsqueeze(0)
+    #     resids = torch.cat([torch.real(resid), torch.imag(resid)], dim=1)
+    #     print('eq_resid2 time: ', time.time() - time0)
+    #     return resids
 
     def ineq_resid(self, X, Y):
         pg, qg, vm, va = self.get_yvars(Y)
@@ -968,8 +954,9 @@ class ACOPFProblem:
         vi = vm * torch.sin(va)
         Yr = self.Ybusr
         Yi = self.Ybusi
-        YrvrYivi = vr@Yr - vi@Yi
-        YivrYrvi = vr@Yi + vi@Yr
+
+        YrvrYivi = torch.squeeze(torch.matmul(self.Ybusr, vr.unsqueeze(-1)) - torch.matmul(self.Ybusi, vi.unsqueeze(-1)))
+        YivrYrvi = torch.squeeze(torch.matmul(self.Ybusi, vr.unsqueeze(-1)) + torch.matmul(self.Ybusr, vi.unsqueeze(-1)))
 
         # real power equations
         dreal_dpg = torch.zeros(self.nbus, self.ng, device=self.device) 
@@ -1045,14 +1032,6 @@ class ACOPFProblem:
     # Solves for the full set of variables
     def complete_partial(self, X, Z):
         Y_partial = torch.zeros(Z.shape, device=self.device)
-
-        # # Re-scale real powers
-        # Y_partial[:, self.pg_pv_zidx] = Z[:, self.pg_pv_zidx] * self.pmax[1:] + \
-        #      (1-Z[:, self.pg_pv_zidx]) * self.pmin[1:]
-        
-        # # Re-scale real parts of voltages
-        # Y_partial[:, self.vm_spv_zidx] = Z[:, self.vm_spv_zidx] * self.vmax[self.spv] + \
-        #     (1-Z[:, self.vm_spv_zidx]) * self.vmin[self.spv]
 
         Y_partial[:, self.pg_pv_zidx] = Z[:, self.pg_pv_zidx] * (self.pmax[self.pv_] - self.pmin[self.pv_]) + self.pmin[
             self.pv_]
@@ -1131,25 +1110,10 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=50):
                     jac_full = data.eq_jac(Y_b)
                     jac = jac_full[:, keep_constr, :]
                     jac = jac[:, :, newton_guess_inds]
-                    # start_time = time.time()
-                    """Direct inverse"""
-                    # newton_jac_inv = torch.inverse(jac)
-                    # delta = torch.matmul(newton_jac_inv, gy.unsqueeze(-1)).squeeze(-1)
-                    """LU decomposition"""
-                    # jac_lu = torch.linalg.lu_factor(jac)
-                    # delta = torch.linalg.ldl_solve(jac_lu, gy.unsqueeze(-1)).squeeze(-1)
+                    
                     """Linear system"""
                     delta = torch.linalg.solve(jac, gy.unsqueeze(-1)).squeeze(-1)
-                    """Approximation"""
-                    # delta = 0
-                    # tt = torch.eye(jac.shape[-1]).to(jac.device) - 0.01 * jac
-                    # jac_inv = gy
-                    # for _ in range(5):
-                    #     jac_inv = torch.matmul(tt, jac_inv.unsqueeze(-1)).squeeze(-1)
-                    #     delta += jac_inv
-                    # delta = 0.01 * delta
-                    # print('lin run_time', time.time()-start_time)
-                    # ineq_step = data.ineq_grad(X_b, Y_b)
+
                     Y_b[:, newton_guess_inds] -= delta
                     if torch.abs(delta).max() < tol:
                         break
