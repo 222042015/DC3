@@ -671,6 +671,7 @@ class ACOPFProblemV:
         self._nineq = 4*self.ng + 2*self.nbus
         self._nknowns = self.nslack
 
+        self.output_dim = self.nspv + self.npv # predict the voltage mag for all spv buses and voltage angle for all pv buses
         # indices of useful quantities in full solution
         self.pg_start_yidx = 0
         self.qg_start_yidx = self.ng
@@ -683,21 +684,12 @@ class ACOPFProblemV:
         self.CorrCoeff = data['CorrCoeff'][0][0]
         self.MaxChangeLoad = data['MaxChangeLoad'][0][0]
 
-
         ## Define train/valid/test split
-        # self._valid_frac = valid_frac
-        # self._test_frac = test_frac
         self._train_num = train_num
         self._valid_num = valid_num
         self._test_num = test_num
         assert self.train_num + self.valid_num + self.test_num <= self._num
 
-        ## Define variables and indices for "partial completion" neural network
-
-        # pg (non-slack) and |v|_g (including slack)
-        # self._partial_vars = np.concatenate([self.pg_start_yidx + self.pv_, self.vm_start_yidx + self.spv, self.va_start_yidx + self.slack])
-        # self._other_vars = np.setdiff1d(np.arange(self.ydim), self._partial_vars)
-        # self._partial_unknown_vars = np.concatenate([self.pg_start_yidx + self.pv_, self.vm_start_yidx + self.spv])
 
         # initial values for solver
         self.pg_init = torch.tensor(ppc['gen'][:, idx_gen.PG] / self.genbase)
@@ -708,14 +700,25 @@ class ACOPFProblemV:
         # voltage angle at slack buses (known)
         self.slack_va = self.va_init[self.slack]
 
-        # indices of useful quantities in partial solution
-        self.pg_pv_zidx = np.arange(self.npv)
-        self.vm_spv_zidx = np.arange(self.npv, 2*self.npv + self.nslack)
+
+        # indices of useful quantities in predicted solution
+        self.vm_zidx = np.arange(self.nbus)
+        self.va_zidx = np.setdiff1d(np.arange(self.nbus), self.slack)
 
         # useful indices for equality constraints
         self.pflow_start_eqidx = 0
         self.qflow_start_eqidx = self.nbus
 
+        # useful indices for equality constraints
+        # constraints for pv buses, just evaluation
+        self.pflow_spv_eqidx = self.pflow_start_eqidx + self.pv
+        self.qflow_spv_eqidx = self.qflow_start_eqidx + self.pv
+
+        self.pflow_pq_eqidx = self.pflow_start_eqidx + self.pq
+        self.qflow_pq_eqidx = self.qflow_start_eqidx + self.pq
+
+        # the indxes of the remaining equality constraints, need to be treated as inequality constraints
+        self.non_spv_eqidx = np.setdiff1d(np.arange(2*self.nbus), np.concatenate([self.pflow_spv_eqidx, self.qflow_spv_eqidx]))
 
         ### For Pytorch
         self._device = None
@@ -736,18 +739,6 @@ class ACOPFProblemV:
     @property
     def Y(self):
         return self._Y
-
-    @property
-    def partial_vars(self):
-        return self._partial_vars
-
-    @property
-    def other_vars(self):
-        return self._other_vars
-
-    @property
-    def partial_unknown_vars(self):
-        return self._partial_unknown_vars
 
     @property
     def xdim(self):
@@ -892,88 +883,34 @@ class ACOPFProblemV:
         YrvrYivi = torch.squeeze(torch.matmul(self.Ybusr, vr.unsqueeze(-1)) - torch.matmul(self.Ybusi, vi.unsqueeze(-1)))
         YivrYrvi = torch.squeeze(torch.matmul(self.Ybusi, vr.unsqueeze(-1)) + torch.matmul(self.Ybusr, vi.unsqueeze(-1)))
 
-        # real power equations
-        dreal_dpg = torch.zeros(self.nbus, self.ng, device=self.device) 
-        dreal_dpg[self.spv, :] = torch.eye(self.ng, device=self.device)
-        dreal_dvm = -mdiag(cosva, YrvrYivi) - dtm(vr, Ydiagv(Yr, cosva)-Ydiagv(Yi, sinva)) \
-            -mdiag(sinva, YivrYrvi) - dtm(vi, Ydiagv(Yi, cosva)+Ydiagv(Yr, sinva))
-        dreal_dva = -mdiag(-vi, YrvrYivi) - dtm(vr, Ydiagv(Yr, -vi)-Ydiagv(Yi, vr)) \
-            -mdiag(vr, YivrYrvi) - dtm(vi, Ydiagv(Yi, -vi)+Ydiagv(Yr, vr))
+        dreal_dvm = (-mdiag(cosva, YrvrYivi) - dtm(vr, Ydiagv(Yr, cosva)-Ydiagv(Yi, sinva)) \
+            -mdiag(sinva, YivrYrvi) - dtm(vi, Ydiagv(Yi, cosva)+Ydiagv(Yr, sinva)))
+        dreal_dva = (-mdiag(-vi, YrvrYivi) - dtm(vr, Ydiagv(Yr, -vi)-Ydiagv(Yi, vr)) \
+            -mdiag(vr, YivrYrvi) - dtm(vi, Ydiagv(Yi, -vi)+Ydiagv(Yr, vr)))
         
-        # reactive power equations
-        dreact_dqg = torch.zeros(self.nbus, self.ng, device=self.device)
-        dreact_dqg[self.spv, :] = torch.eye(self.ng, device=self.device)
-        dreact_dvm = mdiag(cosva, YivrYrvi) + dtm(vr, Ydiagv(Yi, cosva)+Ydiagv(Yr, sinva)) \
-            -mdiag(sinva, YrvrYivi) - dtm(vi, Ydiagv(Yr, cosva)-Ydiagv(Yi, sinva))
-        dreact_dva = mdiag(-vi, YivrYrvi) + dtm(vr, Ydiagv(Yi, -vi)+Ydiagv(Yr, vr)) \
-            -mdiag(vr, YrvrYivi) - dtm(vi, Ydiagv(Yr, -vi)-Ydiagv(Yi, vr))
-
+        dreact_dvm = (mdiag(cosva, YivrYrvi) + dtm(vr, Ydiagv(Yi, cosva)+Ydiagv(Yr, sinva)) \
+            -mdiag(sinva, YrvrYivi) - dtm(vi, Ydiagv(Yr, cosva)-Ydiagv(Yi, sinva)))
+        dreact_dva = (mdiag(-vi, YivrYrvi) + dtm(vr, Ydiagv(Yi, -vi)+Ydiagv(Yr, vr)) \
+            -mdiag(vr, YrvrYivi) - dtm(vi, Ydiagv(Yr, -vi)-Ydiagv(Yi, vr)))
+        
         jac = torch.cat([
-            torch.cat([dreal_dpg.unsqueeze(0).expand(vr.shape[0], *dreal_dpg.shape), 
-                torch.zeros(vr.shape[0], self.nbus, self.ng, device=self.device), 
-                dreal_dvm, dreal_dva], dim=2),
-            torch.cat([torch.zeros(vr.shape[0], self.nbus, self.ng, device=self.device), 
-                dreact_dqg.unsqueeze(0).expand(vr.shape[0], *dreact_dqg.shape),
-                dreact_dvm, dreact_dva], dim=2)],
-            dim=1)
-
+            torch.cat([dreal_dvm, dreal_dva], dim=2),
+            torch.cat([dreact_dvm, dreact_dva], dim=2)],
+            dim=1
+        )
         return jac
 
-
-    def ineq_jac(self, Y):
-        jac = torch.cat([
-            torch.cat([torch.eye(self.ng, device=self.device), 
-                torch.zeros(self.ng, self.ng, device=self.device), 
-                torch.zeros(self.ng, self.nbus, device=self.device), 
-                torch.zeros(self.ng, self.nbus, device=self.device)], dim=1),
-            torch.cat([-torch.eye(self.ng, device=self.device), 
-                torch.zeros(self.ng, self.ng, device=self.device), 
-                torch.zeros(self.ng, self.nbus, device=self.device), 
-                torch.zeros(self.ng, self.nbus, device=self.device)], dim=1),
-            torch.cat([torch.zeros(self.ng, self.ng, device=self.device),
-                torch.eye(self.ng, device=self.device), 
-                torch.zeros(self.ng, self.nbus, device=self.device), 
-                torch.zeros(self.ng, self.nbus, device=self.device)], dim=1),
-            torch.cat([torch.zeros(self.ng, self.ng, device=self.device), 
-                -torch.eye(self.ng, device=self.device),
-                torch.zeros(self.ng, self.nbus, device=self.device), 
-                torch.zeros(self.ng, self.nbus, device=self.device)], dim=1),
-            torch.cat([torch.zeros(self.nbus, self.ng, device=self.device),
-                torch.zeros(self.nbus, self.ng, device=self.device), 
-                torch.eye(self.nbus, device=self.device), 
-                torch.zeros(self.nbus, self.nbus, device=self.device)], dim=1),
-            torch.cat([torch.zeros(self.nbus, self.ng, device=self.device), 
-                torch.zeros(self.nbus, self.ng, device=self.device),
-                -torch.eye(self.nbus, device=self.device), 
-                torch.zeros(self.nbus, self.nbus, device=self.device)], dim=1)
-            ], dim=0)
-        return jac.unsqueeze(0).expand(Y.shape[0], *jac.shape)
-
-    # Processes intermediate neural network output
-    def process_output(self, X, out):
-        out2 = nn.Sigmoid()(out[:, :-self.nbus+self.nslack])
-        pg = out2[:, :self.qg_start_yidx] * self.pmax + (1-out2[:, :self.qg_start_yidx]) * self.pmin
-        qg = out2[:, self.qg_start_yidx:self.vm_start_yidx] * self.qmax + \
-            (1-out2[:, self.qg_start_yidx:self.vm_start_yidx]) * self.qmin
-        vm = out2[:, self.vm_start_yidx:] * self.vmax + (1- out2[:, self.vm_start_yidx:]) * self.vmin
-
-        va = torch.zeros(X.shape[0], self.nbus, device=self.device)
-        va[:, self.nonslack_idxes] = out[:, self.va_start_yidx:]
-        va[:, self.slack] = torch.tensor(self.slack_va, device=self.device).unsqueeze(0).expand(X.shape[0], self.nslack)
-
-        return torch.cat([pg, qg, vm, va], dim=1)
-
-    # Solves for the full set of variables
-    def complete_partial(self, X, Z):
+    def scale_partial(self, Z):
         Y_partial = torch.zeros(Z.shape, device=self.device)
 
-        Y_partial[:, self.pg_pv_zidx] = Z[:, self.pg_pv_zidx] * (self.pmax[self.pv_] - self.pmin[self.pv_]) + self.pmin[
-            self.pv_]
-        # Re-scale voltage magnitudes
-        Y_partial[:, self.vm_spv_zidx] = Z[:, self.vm_spv_zidx] * (self.vmax[self.spv] - self.vmin[self.spv]) + \
-                                        self.vmin[self.spv]
+        # Y_partial[:, :self.nspv] = Z[:, :self.nspv] * (self.vmax - self.vmin)[:self.nspv] + self.vmin[:self.nspv]
+        Y_partial[:, :self.nspv] = Z[:, :self.nspv] * (self.vmax - self.vmin)[self.spv] + self.vmin[self.spv]
+        Y_partial[:, self.nspv:] = Z[:, self.nspv:] * (self.va_max - self.va_min) + self.va_min
+        return Y_partial
 
-        return PFFunction(self)(X, Y_partial)
+    def complete_partial(self, X, Y_partial):
+        # Y_partial = self.scale_partial(Z)
+        return PFFunctionV(self)(X, Y_partial)
 
 
     def opt_solve(self, X, solver_type='pypower', tol=1e-6):
@@ -1008,120 +945,141 @@ class ACOPFProblemV:
 
         return np.array(Y), total_time, total_time/len(X_np)
 
-def PFFunctionV(data, tol=1e-5, bsz=200, max_iters=50):
+def PFFunctionV(data, tol=1e-5, bsz=200, max_iters=30):
     class PFFunctionFn(Function):
         @staticmethod
         def forward(ctx, X, Z):
-            # start_time = time.time()
             ## Step 1: Newton's method
-            Y = torch.zeros(X.shape[0], data.ydim, device=X.device)
-            # known/estimated values (pg at pv buses, vm at all gens, va at slack bus)
-            Y[:, data.pg_start_yidx + data.pv_] = Z[:, data.pg_pv_zidx]  # pg at non-slack gens
-            Y[:, data.vm_start_yidx + data.spv] = Z[:, data.vm_spv_zidx]  # vm at gens
-            # init guesses for remaining values
-            Y[:, data.vm_start_yidx + data.pq] = data.vm_init[data.pq]  # vm at load buses
-            Y[:, data.va_start_yidx: data.va_start_yidx+data.nb] = data.va_init   # va at all bus
-            Y[:, data.qg_start_yidx:data.qg_start_yidx + data.ng] = 0  # qg at gens (not used in Newton upd)
-            Y[:, data.pg_start_yidx + data.slack_] = 0  # pg at slack (not used in Newton upd)
+            Y = torch.zeros(X.shape[0], data.ydim, device=DEVICE)
+
+            Y[:, data.vm_start_yidx + data.spv] = Z[:, :data.nspv] # vm for all spv buses from prediction
+            Y[:, data.va_start_yidx + data.pv] = Z[:, data.nspv: ] # va for all pv buses from the prediction (no slack)
+            Y[:, data.va_start_yidx + data.slack] = torch.tensor(data.slack_va, device=DEVICE) # va at slack bus is known
+
+            # set the initial values for all vm and va at pq buses
+            Y[:, data.vm_start_yidx + data.pq] = torch.tensor(data.vm_init[data.pq]+0.01, device=DEVICE)
+            Y[:, data.va_start_yidx + data.pq] = torch.tensor(data.va_init[data.pq]+0.001, device=DEVICE)
+
+            newton_guess_inds = np.concatenate([
+                data.vm_start_yidx + data.pq,
+                data.va_start_yidx + data.pq
+            ])
+
+            newton_guess_inds_z = np.concatenate([
+                data.pq,
+                data.nbus + data.pq
+            ])
 
             keep_constr = np.concatenate([
-                data.pflow_start_eqidx + data.pv,  # real power flow at non-slack gens
-                data.pflow_start_eqidx + data.pq,  # real power flow at load buses
-                data.qflow_start_eqidx + data.pq])  # reactive power flow at load buses
-            newton_guess_inds = np.concatenate([
-                data.vm_start_yidx + data.pq,  # vm at load buses
-                data.va_start_yidx + data.pv,  # va at non-slack gens
-                data.va_start_yidx + data.pq])  # va at load buses
-
-            converged = torch.zeros(X.shape[0])
+                data.pflow_start_eqidx + data.pq,     # real power flow at non-slack gens (B-D-R)
+                data.qflow_start_eqidx + data.pq
+            ])  
+        
+            # converged = torch.zeros(X.shape[0], dtype=torch.bool, device=DEVICE, requires_grad=False)
+            converged = torch.zeros(X.shape[0], device=DEVICE, requires_grad=False)
             jacs = []
-            # newton_jacs_inv = []
             for b in range(0, X.shape[0], bsz):
-                X_b = X[b:b + bsz]
-                Y_b = Y[b:b + bsz]
-                for _ in range(max_iters):
+                X_b = X[b:b+bsz]
+                Y_b = Y[b:b+bsz]
+
+                for i in range(max_iters):
+                    # print(i)
                     gy = data.eq_resid(X_b, Y_b)[:, keep_constr]
                     jac_full = data.eq_jac(Y_b)
-                    jac = jac_full[:, keep_constr, :]
-                    jac = jac[:, :, newton_guess_inds]
+                    jac = jac_full[:, keep_constr, :]  # J_step1
+                    # newton_jac_inv = torch.inverse(jac[:, :, newton_guess_inds_z])
+                    jac = jac[:, :, newton_guess_inds_z]
 
-                    """Linear system"""
-                    delta = torch.linalg.solve(jac, gy.unsqueeze(-1)).squeeze(-1)
-
-                    Y_b[:, newton_guess_inds] -= delta
-                    if torch.abs(delta).max() < tol:
+                    try:
+                        delta = torch.linalg.solve(jac, gy.unsqueeze(-1)).squeeze(-1)
+                    except:
+                        # if the prediction does not provide a invertible jacobian, take one step and then break
+                        # add perturbation to the diagonal of jac
+                        perturb = torch.eye(jac.size(1)).unsqueeze(0).repeat(jac.size(0), 1, 1).to(DEVICE)
+                        eps = 1e-10
+                        delta = torch.linalg.solve(jac + eps*perturb, gy.unsqueeze(-1)).squeeze(-1)
+                        Y_b[:, newton_guess_inds] -= delta
                         break
-                if torch.abs(delta).max() > tol:
-                    print('Newton methods for Power Flow does not converge')
-                # print(torch.abs(delta).max())
-                converged[b:b + bsz] = (delta.abs() < tol).all(dim=1)
-                jacs.append(jac_full)
-                # newton_jacs_inv.append(newton_jac_inv)
+                    Y_b[:, newton_guess_inds] -= delta
+                    if torch.norm(delta, dim=1).abs().max() < tol:
+                        break
+                else:
+                    print("the nr completion does not converge!")
 
-            ## Step 2: Solve for remaining variables
+                converged[b:b+bsz] = (delta.abs() < tol).all(dim=1)
+                if (converged[b:b+bsz] == 0).sum() > 0:
+                    print("number of non-converged samples: {}".format((converged[b:b+bsz] == 0).sum()))
+                # print("number of unsolvable samples: {}".format((status == 0).sum()))
+                jacs.append(jac_full) # only save the last step, TODO: replace by the jacobian evaluated at the current
+
             # solve for qg values at all gens (note: requires qg in Y to equal 0 at start of computation)
+            Y[:, data.pg_start_yidx:data.pg_start_yidx + data.ng] = \
+                -data.eq_resid(X, Y)[:, data.pflow_start_eqidx + data.spv]
+            # solve for pg at slack bus (note: requires slack pg in Y to equal 0 at start of computation)
             Y[:, data.qg_start_yidx:data.qg_start_yidx + data.ng] = \
                 -data.eq_resid(X, Y)[:, data.qflow_start_eqidx + data.spv]
-            # solve for pg at slack bus (note: requires slack pg in Y to equal 0 at start of computation)
-            Y[:, data.pg_start_yidx + data.slack_] = \
-                -data.eq_resid(X, Y)[:, data.pflow_start_eqidx + data.slack]
+            
+            ctx.data = data 
+        
+            ctx.save_for_backward(torch.cat(jacs), 
+            torch.tensor(newton_guess_inds, device=DEVICE), 
+            torch.tensor(newton_guess_inds_z, device=DEVICE),
+            torch.tensor(keep_constr, device=DEVICE))
 
-            ctx.data = data
-            ctx.save_for_backward(torch.cat(jacs),
-                                  torch.as_tensor(newton_guess_inds, device=X.device),
-                                  torch.as_tensor(keep_constr, device=X.device))
-            return Y
+            return Y, converged
 
         @staticmethod
-        def backward(ctx, dl_dy):
+        def backward(ctx, dl_dy, convereged):
 
             data = ctx.data
-            # jac, newton_jac_inv, newton_guess_inds, keep_constr = ctx.saved_tensors
-            jac, newton_guess_inds, keep_constr = ctx.saved_tensors
-
+            jac, newton_guess_inds, newton_guess_inds_z, keep_constr = ctx.saved_tensors
             ## Step 2 (calc pg at slack and qg at gens)
-            jac_pre_inv = jac[:, keep_constr, :]
-            jac_pre_inv = jac_pre_inv[:, :, newton_guess_inds]
 
             # gradient of all voltages through step 3 outputs
-            last_eqs = np.concatenate([data.pflow_start_eqidx + data.slack, data.qflow_start_eqidx + data.spv])
+            last_eqs = np.concatenate([data.pflow_start_eqidx + data.spv, data.qflow_start_eqidx + data.spv])
             last_vars = np.concatenate([
-                data.pg_start_yidx + data.slack_, np.arange(data.qg_start_yidx, data.qg_start_yidx + data.ng)])
+                np.arange(data.pg_start_yidx, data.pg_start_yidx + data.ng), 
+                np.arange(data.qg_start_yidx, data.qg_start_yidx + data.ng)])
             jac3 = jac[:, last_eqs, :]
-            dl_dvmva_3 = -jac3[:, :, data.vm_start_yidx:].transpose(1, 2).bmm(
+            dl_dvmva_3 = -jac3.transpose(1,2).bmm(
                 dl_dy[:, last_vars].unsqueeze(-1)).squeeze(-1)
+            
+            dl_dpdqd_3 = dl_dy[:, last_vars]  # dl_dz2
 
-            # gradient of pd at slack and qd at gens through step 3 outputs
-            dl_dpdqd_3 = dl_dy[:, last_vars]
-
-            # insert into correct places in x and y loss vectors
-            dl_dy_3 = torch.zeros(dl_dy.shape, device=jac.device)
+            dl_dy_3 = torch.zeros(dl_dy.shape, device=DEVICE)
             dl_dy_3[:, data.vm_start_yidx:] = dl_dvmva_3
 
-            dl_dx_3 = torch.zeros(dl_dy.shape[0], data.xdim, device=jac.device)
-            dl_dx_3[:, np.concatenate([data.slack, data.nbus + data.spv])] = dl_dpdqd_3
+            # gradient of pd at slack and qd at gens through step 3 outputs
+            dl_dx_3 = torch.zeros(dl_dy.shape[0], data.xdim, device=DEVICE)
+            dl_dx_3[:, np.concatenate([data.spv, data.nbus + data.spv])] = dl_dpdqd_3
 
             ## Step 1
-            dl_dy_total = dl_dy_3 + dl_dy  # Backward pass vector including result of last step
+            dl_dy_total = dl_dy_3 + dl_dy  # Backward pass vector including result of last step, expand to all output variables
 
             # Use precomputed inverse jacobian
             jac2 = jac[:, keep_constr, :]
-            d_int = torch.linalg.solve(jac_pre_inv.transpose(1, 2),
-                                       dl_dy_total[:, newton_guess_inds].unsqueeze(-1)).squeeze(-1)
 
-            dl_dz_2 = torch.zeros(dl_dy.shape[0], data.npv + data.ng, device=jac.device)
-            dl_dz_2[:, data.pg_pv_zidx] = -d_int[:, :data.npv]  # dl_dpg at pv buses
-            dl_dz_2[:, data.vm_spv_zidx] = -jac2[:, :, data.vm_start_yidx + data.spv].transpose(1, 2).bmm(
+            jac4 = jac[:, keep_constr, :]
+            jac4 = jac4[:, :, newton_guess_inds_z]
+            d_int = torch.linalg.solve(jac4.transpose(1,2), dl_dy_total[:,newton_guess_inds].unsqueeze(-1)).squeeze(-1)
+
+
+            dl_dz_2 = torch.zeros(dl_dy.shape[0], data.output_dim, device=DEVICE)
+            dl_dz_2[:, :data.ng] = -jac2[:, :, data.spv].transpose(1,2).bmm(
+                d_int.unsqueeze(-1)).squeeze(-1)
+            dl_dz_2[:, data.ng:] = -jac2[:, :, data.nbus + data.pv].transpose(1,2).bmm(
                 d_int.unsqueeze(-1)).squeeze(-1)
 
-            dl_dx_2 = torch.zeros(dl_dy.shape[0], data.xdim, device=jac.device)
-            dl_dx_2[:, data.pv] = d_int[:, :data.npv]  # dl_dpd at pv buses
-            dl_dx_2[:, data.pq] = d_int[:, data.npv:data.npv + len(data.pq)]  # dl_dpd at pq buses
-            dl_dx_2[:, data.nbus + data.pq] = d_int[:, -len(data.pq):]  # dl_dqd at pq buses
+            dl_dx_2 = torch.zeros(dl_dy.shape[0], data.xdim, device=DEVICE)
+            dl_dx_2[:, data.pq] = d_int[:, :len(data.pq)]
+            dl_dx_2[:, data.nbus + data.pq] = d_int[:, len(data.pq):]
 
             # Final quantities
             dl_dx_total = dl_dx_3 + dl_dx_2
             dl_dz_total = dl_dz_2 + dl_dy_total[:, np.concatenate([
-                data.pg_start_yidx + data.pv_, data.vm_start_yidx + data.spv])]
+                data.vm_start_yidx + data.spv, data.va_start_yidx + data.pv])]
+
             return dl_dx_total, dl_dz_total
+
+
     return PFFunctionFn.apply
