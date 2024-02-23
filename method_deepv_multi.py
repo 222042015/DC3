@@ -14,7 +14,7 @@ from setproctitle import setproctitle
 import os
 import argparse
 
-from utils import my_hash, str_to_bool, ACOPFProblemV
+from utils import my_hash, str_to_bool, ACOPFProblem2
 import default_args
 import random
 
@@ -22,7 +22,25 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='DeepV_Multi')
-    parser.add_argument('--probType', type=str, default='acopf118',help='problem type')
+    # parser = argparse.ArgumentParser(description='DC3')
+    parser.add_argument('--probType', type=str, default='acopf39'
+                        , help='problem type')
+    parser.add_argument('--simpleVar', type=int, 
+        help='number of decision vars for simple problem')
+    parser.add_argument('--simpleIneq', type=int,
+        help='number of inequality constraints for simple problem')
+    parser.add_argument('--simpleEq', type=int,
+        help='number of equality constraints for simple problem')
+    parser.add_argument('--simpleEx', type=int,
+        help='total number of datapoints for simple problem')
+    parser.add_argument('--nonconvexVar', type=int,
+        help='number of decision vars for nonconvex problem')
+    parser.add_argument('--nonconvexIneq', type=int,
+        help='number of inequality constraints for nonconvex problem')
+    parser.add_argument('--nonconvexEq', type=int,
+        help='number of equality constraints for nonconvex problem')
+    parser.add_argument('--nonconvexEx', type=int,
+        help='total number of datapoints for nonconvex problem')
     parser.add_argument('--epochs', type=int,
         help='number of neural network epochs')
     parser.add_argument('--batchSize', type=int,
@@ -31,20 +49,37 @@ def main():
         help='neural network learning rate')
     parser.add_argument('--hiddenSize', type=int,
         help='hidden layer size for neural network')
+    parser.add_argument('--softWeight', type=float,
+        help='total weight given to constraint violations in loss')
+    parser.add_argument('--softWeightEqFrac', type=float,
+        help='fraction of weight given to equality constraints (vs. inequality constraints) in loss')
+    parser.add_argument('--useCompl', type=str_to_bool,
+        help='whether to use completion')
+    parser.add_argument('--useTrainCorr', type=str_to_bool,
+        help='whether to use correction during training')
+    parser.add_argument('--useTestCorr', type=str_to_bool,
+        help='whether to use correction during testing')
+    parser.add_argument('--corrMode', choices=['partial', 'full'],
+        help='employ DC3 correction (partial) or naive correction (full)')
+    parser.add_argument('--corrTrainSteps', type=int,
+        help='number of correction steps during training')
+    parser.add_argument('--corrTestMaxSteps', type=int,
+        help='max number of correction steps during testing')
+    parser.add_argument('--corrEps', type=float,
+        help='correction procedure tolerance')
+    parser.add_argument('--corrLr', type=float,
+        help='learning rate for correction procedure')
+    parser.add_argument('--corrMomentum', type=float,
+        help='momentum for correction procedure')
     parser.add_argument('--saveAllStats', type=str_to_bool,
         help='whether to save all stats, or just those from latest epoch')
     parser.add_argument('--resultsSaveFreq', type=int,
         help='how frequently (in terms of number of epochs) to save stats to file')
-    parser.add_argument('--max_outer_iter', type=int, help='max number of outer iterations')
-    parser.add_argument('--max_inner_iter', type=int, help='max number of inner iterations')
-    parser.add_argument('--alpha', type=float, help='alpha')
-    parser.add_argument('--tau', type=float, help='tau')
-    parser.add_argument('--rho_max', type=float, help='rho_max')
-    parser.add_argument('--checkpoint', type=int, help='load checkpoint for testing')
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
-    defaults = default_args.deepv_default_args(args['probType'])
+    # defaults = default_args.deepv_default_args(args['probType'])
+    defaults = default_args.method_default_args(args['probType'])
     for key in defaults.keys():
         if args[key] is None:
             args[key] = defaults[key]
@@ -67,7 +102,7 @@ def main():
 
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
-    data = ACOPFProblemV(dataset, train_num=800, valid_num=100, test_num=100) #, valid_frac=0.05, test_frac=0.05)
+    data = ACOPFProblem2(dataset, train_num=800, valid_num=100, test_num=100) #, valid_frac=0.05, test_frac=0.05)
     data._device = DEVICE
     print(DEVICE)
     for attr in dir(data):
@@ -91,7 +126,8 @@ def main():
 def train_net(data, args, save_dir):
     solver_step = args['lr']
     nepochs = args['epochs']
-    batch_size = args['batchSize']
+    batch_size = 100
+    solver_step = 0.0005
 
     train_dataset = TensorDataset(data.trainX)
     valid_dataset = TensorDataset(data.validX)
@@ -103,91 +139,137 @@ def train_net(data, args, save_dir):
 
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
-    solver_opt = optim.Adam(solver_net.parameters(), lr=1e-3)
+    solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
 
     classifier = Classifier(data, args)
     classifier.to(DEVICE)
     classifier_opt = optim.Adam(classifier.parameters(), lr=5e-4)
 
-    classifier_copy = Classifier(data, args)
-    classifier_copy.to(DEVICE)
-    classifier_copy.load_state_dict(classifier.state_dict())
-    for param in classifier_copy.parameters():
-        param.requires_grad = False
+    # classifier_copy = Classifier(data, args)
+    # classifier_copy.to(DEVICE)
+    # classifier_copy.load_state_dict(classifier.state_dict())
+    # for param in classifier_copy.parameters():
+    #     param.requires_grad = False
+    buffer = BalancedBuffer(5000)
 
     stats = {}
-    T = 1000 - 10
-    I = 1
-    I_warmup = 1
+    iters = 0
+    factor = 1
+    args['factor'] = factor
+    flag = True
 
-    # inner loop: train the solver_net so that the predicted demand is close to the true demand
-    # outer loop: train the solver_net so that the predicted solution is feasible, by updating the dual variables
-    step = 1
-    buffer = BalancedBuffer(5000)
-    train_classfier = True
-    w = 1e5 # case 57
-    fac = 2
-    for t in range(1, T+1):
-        if t == 1:
-            solver_net.train()
-            classifier.eval()
-            for i in range(1000):
-                epoch_stats = {}
-                for Xtrain in train_loader:
-                    Xtrain = Xtrain[0].to(DEVICE)
-                    start_time = time.time()
-                    solver_opt.zero_grad()
-                    Yhat_prob = solver_net(Xtrain)
-                    Yhat_partial_train = data.scale_partial(Yhat_prob)
-                    Yhat_train, converged = data.complete_partial(Xtrain, Yhat_partial_train)
-                    # train_loss = total_loss1(data, Xtrain, Yhat_train, t)
-                    # train_loss = total_loss(data, Xtrain, Yhat_train, fac)
-                    ########### TODO 
-                    train_loss = total_loss2(data, Xtrain, Yhat_train)
-                    train_loss.mean().backward()
-                    torch.nn.utils.clip_grad_norm_(solver_net.parameters(), 1e6)
-                    solver_opt.step()
-                    train_time = time.time() - start_time
-                    dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
-                    dict_agg(epoch_stats, 'train_time', train_time, op='sum')
-                    # if converged.sum() > 0:
-                    #     Xtrain_conv = Xtrain[converged.bool(), :]
-                    #     Yhat_train_conv = Yhat_train[converged.bool(), :]
-                    #     train_loss = total_loss1(data, Xtrain_conv, Yhat_train_conv, t)
-                    #     train_loss.mean().backward()
-                    #     torch.nn.utils.clip_grad_norm_(solver_net.parameters(), 1e5)
-                    #     solver_opt.step()
-                    #     train_time = time.time() - start_time
-                    #     dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
-                    #     dict_agg(epoch_stats, 'train_time', train_time, op='sum')
-                    # else:
-                    #     dict_agg(epoch_stats, 'train_loss', np.zeros(1))
-                    #     dict_agg(epoch_stats, 'train_time', 100, op='sum')
-                    buffer.add(Yhat_prob, converged)
+    contrastive_loss = SupConLoss()
+    for i in range(nepochs):
+        epoch_stats = {}
 
-                solver_net.eval()
-                for Xvalid in valid_loader:
-                    Xvalid = Xvalid[0].to(DEVICE)
-                    eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
-                
-                print(
-                    'Epoch {}: train loss {:.4f}, eval {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, eq mean {:.4f}, eq num viol {:.4f}, time {:.4f}'.format(
-                        i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
-                        np.mean(epoch_stats['valid_ineq_max']),
-                        np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0'])/data.nineq,
-                        np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_eq_mean']),
-                        np.mean(epoch_stats['valid_eq_num_viol_0'])/data.neq, np.mean(epoch_stats['valid_time'])))
+        # Get valid loss
+        solver_net.eval()
+        for Xvalid in valid_loader:
+            Xvalid = Xvalid[0].to(DEVICE)
+            eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
+
+        # Get test loss
+        solver_net.eval()
+        for Xtest in test_loader:
+            Xtest = Xtest[0].to(DEVICE)
+            eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
+
+        # Get train loss
+        
+        solver_net.train()
+        classifier.eval()
+        for Xtrain in train_loader:
+            Xtrain = Xtrain[0].to(DEVICE)
+            start_time = time.time()
+            
+            Yhat_prob = solver_net(Xtrain)
+            Yhat_partial_train = data.scale_partial(Yhat_prob)
+            Yhat_train, converged = data.complete_partial(Xtrain, Yhat_partial_train)
+            train_loss = total_loss(data, Xtrain, Yhat_train, args)
+            buffer.add(Yhat_prob, converged)
 
 
-                # step += 1
-                # print('Epoch {}: train loss {:.4f}, time {:.4f}'.format(step, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['train_time'])))
-                # fac = fac * 2
 
-            solver_net.eval()
+            # add classifer loss to the loss to drive the model to predict feasible solutions
+            if i >= 10 and len(buffer.buffer_0) > 0 and len(buffer.buffer_1) > 0:
+                feasible = classifier(Yhat_prob).squeeze(-1)
+                label = torch.ones(feasible.shape, device=DEVICE, dtype=torch.long)
+                class_loss = classifier_loss(feasible, label).mean()
+                # append the class_loss to the train_loss
+                train_loss = torch.cat((train_loss, class_loss.unsqueeze(0)))
+
+            if flag or i == 10: # reinitialize weights after updating the factor
+                weights = torch.ones_like(train_loss)
+                weights = torch.nn.Parameter(weights)
+                T = weights.sum().detach()
+                optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
+                l0 = train_loss.detach()
+                flag = False
+            
+            weighted_loss = (weights * train_loss).sum()
+            solver_opt.zero_grad()
+            weighted_loss.backward(retain_graph=True)
+
+            gw = []
+            for ii in range(len(train_loss)):
+                dl = torch.autograd.grad(weights[ii] * train_loss[ii], solver_net.parameters(), retain_graph=True, create_graph=True)[0]
+                gw.append(torch.norm(dl))
+            
+            gw = torch.stack(gw)
+            loss_ratio = train_loss.detach() / l0
+            rt = loss_ratio / loss_ratio.mean()
+            gw_avg = gw.mean().detach()
+            constant = (gw_avg * rt ** 0.01).detach()
+            gradnorm_loss = torch.abs(gw - constant).sum()
+            optimizer_gradnorm.zero_grad()
+            gradnorm_loss.backward()
+            optimizer_gradnorm.step()
+            solver_opt.step()
+            optimizer_gradnorm.step()
+
+            weights = (T * weights / weights.sum()).detach()
+            weights = torch.nn.Parameter(weights)
+            optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
+            iters += 1
+
+            train_time = time.time() - start_time
+            dict_agg(epoch_stats, 'train_loss', train_loss.sum().unsqueeze(0).detach().cpu().numpy())
+            dict_agg(epoch_stats, 'train_time', train_time, op='sum')
+
+        print(
+            'Epoch {}: train loss {:.4f}, eval {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, time {:.4f}'.format(
+                i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
+                np.mean(epoch_stats['valid_ineq_max']),
+                np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
+                np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
+
+
+        if args['saveAllStats']:
+            if i == 0:
+                for key in epoch_stats.keys():
+                    stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
+            else:
+                for key in epoch_stats.keys():
+                    stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
+        else:
+            stats = epoch_stats
+
+        if (i % args['resultsSaveFreq'] == 0):
+            with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
+                pickle.dump(stats, f)
+            with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
+                torch.save(solver_net.state_dict(), f)
+        
+        if (i+1) % 20 == 0:
+            args['factor'] = args['factor'] * 1.2
+            flag = True
+
+        if i <= 10 or (i+1)%10 == 0:
+            # train the classifier
             classifier.train()
-            classifier_copy.eval()
-            for i in range(100):
-                epoch_stats_class = {}
+            solver_net.eval()
+            class_loss = []
+            for s in range(1000):
                 if len(buffer.buffer_0) == 0 or len(buffer.buffer_1) == 0:
                     break
                 # sample the data from the buffer
@@ -197,183 +279,42 @@ def train_net(data, args, save_dir):
                 loss = classifier_loss(pred, Ytrain)
                 loss.mean().backward()
                 classifier_opt.step()
-                dict_agg(epoch_stats_class, 'train_classifier_loss', loss.squeeze().detach().cpu().numpy())
+                class_loss.append(loss.mean().detach().cpu().numpy())
+                # dict_agg(epoch_stats, 'train_classifier_loss', loss.squeeze().detach().cpu().numpy())
+                if s % 100 == 0:
+                    print('Epoch {}: train classifier loss {:.4f}'.format(s, np.mean(class_loss)))
 
-                if i % 100 == 0:
-                    print('Epoch {}: train classifier loss {:.4f}'.format(i, np.mean(epoch_stats_class['train_classifier_loss'])))
-            
-            classifier_copy.load_state_dict(classifier.state_dict())
-
-
-        if t == 1:
-            continue
-
-        for i in range(1):
-            epoch_stats = {}
-            solver_net.train()
-            classifier_copy.eval()
-            for Xtrain in train_loader:
-                Xtrain = Xtrain[0].to(DEVICE)
-                start_time = time.time()
-                solver_opt.zero_grad()
-                Yhat_prob = solver_net(Xtrain)
-                Yhat_partial_train = data.scale_partial(Yhat_prob)
-                Yhat_train, converged = data.complete_partial(Xtrain, Yhat_partial_train)
-                # solver_loss = total_loss(data, Xtrain, Yhat_train, step)
-                solver_loss = total_loss(data, Xtrain, Yhat_train, fac)
-
-                feasible = classifier_copy(Yhat_prob).squeeze(-1)
-                label = torch.ones(feasible.shape, device=DEVICE, dtype=torch.long)
-                class_loss = classifier_loss(feasible, label)
-
-                train_loss = solver_loss + class_loss * w
-                train_loss.mean().backward()
-
-                solver_opt.step()
-                train_time = time.time() - start_time
-                buffer.add(Yhat_prob, converged)
-                    
-                dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
-                dict_agg(epoch_stats, 'train_time', train_time, op='sum')
-
-            step += 1
-            # Get valid loss
-            solver_net.eval()
-            for Xvalid in valid_loader:
-                Xvalid = Xvalid[0].to(DEVICE)
-                eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
-            
-            if i%1 == 0:
-                # Get test loss
-                solver_net.eval()
-                for Xtest in test_loader:
-                    Xtest = Xtest[0].to(DEVICE)
-                    eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
-
-            
-            if i%1 == 0:
-                print(
-                    'Epoch {}: train loss {:.4f}, eval {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, eq mean {:.4f}, eq num viol {:.4f}, time {:.4f}'.format(
-                        step, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
-                        np.mean(epoch_stats['valid_ineq_max']),
-                        np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0'])/data.nineq,
-                        np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_eq_mean']),
-                        np.mean(epoch_stats['valid_eq_num_viol_0'])/data.neq, np.mean(epoch_stats['valid_time'])))
-
-            if args['saveAllStats']:
-                if t == 2:
-                    for key in epoch_stats.keys():
-                        stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
-                else:
-                    for key in epoch_stats.keys():
-                        stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
-            else:
-                stats = epoch_stats
-
-            if t % args['resultsSaveFreq'] == 0:
-                with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
-                    pickle.dump(stats, f)
-                with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
-                    torch.save(solver_net.state_dict(), f)
+                # classifier_copy.load_state_dict(classifier.state_dict())
 
 
-        # if train_classfier:
-        #     solver_net.eval()
-        #     classifier.train()
-        #     for s in range(1000):
-        #         if len(buffer.buffer_0) == 0 or len(buffer.buffer_1) == 0:
-        #             break
-        #         # sample the data from the buffer
-        #         Xtrain, Ytrain = buffer.sample(200)
-        #         classifier_opt.zero_grad()
-        #         pred = classifier(Xtrain).squeeze(-1)
-        #         loss = classifier_loss(pred, Ytrain)
-        #         loss.mean().backward()
-        #         classifier_opt.step()
-        #         dict_agg(epoch_stats, 'train_classifier_loss', loss.squeeze().detach().cpu().numpy())
-        #         if s % 100 == 0:
-        #             print('Epoch {}: train classifier loss {:.4f}'.format(s, np.mean(epoch_stats['train_classifier_loss'])))
-        #     if np.mean(epoch_stats['train_classifier_loss']) < 1e-3:
-        #         train_classfier = False
-        #         print("stop training classifier")
-    
-        if t % 2 == 0:
-            if train_classfier:
-                solver_net.eval()
-                classifier.train()
-                for s in range(100):
-                    if len(buffer.buffer_0) == 0 or len(buffer.buffer_1) == 0:
-                        break
-                    # sample the data from the buffer
-                    Xtrain, Ytrain = buffer.sample(200)
-                    classifier_opt.zero_grad()
-                    pred = classifier(Xtrain).squeeze(-1)
-                    loss = classifier_loss(pred, Ytrain)
-                    loss.mean().backward()
-                    classifier_opt.step()
-                    dict_agg(epoch_stats, 'train_classifier_loss', loss.squeeze().detach().cpu().numpy())
-                    if s % 100 == 0:
-                        print('Epoch {}: train classifier loss {:.4f}'.format(s, np.mean(epoch_stats['train_classifier_loss'])))
-                # if np.mean(epoch_stats['train_classifier_loss']) < 1e-4:
-                #     train_classfier = False
-                #     print("stop training classifier")
-            classifier_copy.load_state_dict(classifier.state_dict())
         
-        if t % 20 == 0:
-            fac = min(fac * 1.2, 50000)
-        
-        if t % 50 == 0:
-            # decay the learning rate of the classifier
-            for param_group in classifier_opt.param_groups:
-                param_group['lr'] *= 0.999
             
-            for param_group in solver_opt.param_groups:
-                param_group['lr'] *= 0.98
-
-            w = max(w*0.8, 1e6)
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
         pickle.dump(stats, f)
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
-
     return solver_net, stats
-
-def log_barrier(z, t):
-    if z <= - 1 / t**2:
-        return - torch.log(-z) / t
-    else:
-        return t*z - np.log(1 / (t**2)) / t + 1 / t
 
 def log_barrier_vectorized(z, t):
     t_tensor = torch.ones(z.shape, device=DEVICE) * t
     return torch.where(z <= -1 / t**2, -torch.log(-z) / t, t * z - torch.log(1 / (t_tensor**2)) / t + 1 / t)
 
-def total_loss(data, X, Y, t):
-    # factor = np.floor(t / 10) + 1
-    # factor = t
-    factor = 1
-    # factor = min(500, max(t, 10))
-    ineq_resid = data.ineq_resid(X, Y) + 1e-3
-    obj_cost = data.obj_fn(Y) * factor
+def total_loss(data, X, Y, args):
+    t = args['factor']
+    obj_cost = data.obj_fn(Y).mean(dim=0) #* 100
+    # max of 0 and the obj_cost
+    # obj_cost = torch.max(data.obj_fn(Y).mean(dim=0) * 100, torch.tensor(100, device=DEVICE))
+    ineq_resid = data.ineq_resid(X, Y)
     ineq_resid_bar = torch.zeros_like(ineq_resid)
     for i in range(ineq_resid.shape[0]):
-        ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], (1+t // 100) * 100 )
+        ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], t)
+    ineq_resid_bar = ineq_resid_bar.sum(dim=1).mean(dim=0)
 
-    # changed from sum to mean
-    return ineq_resid_bar.sum(dim=1) + obj_cost
+    # append obj_cost to ineq_resid_bar
+    loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0)))
 
-def total_loss1(data, X, Y, t):
-    obj_cost = data.obj_fn(Y) 
-    return obj_cost 
-
-def total_loss2(data, X, Y):
-    obj_cost = data.obj_fn(Y)
-    ineq_dist = data.ineq_dist(X, Y)
-    ineq_cost = torch.norm(ineq_dist, dim=1)
-    eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
-    return obj_cost + 100*ineq_cost + eq_cost
-
+    return loss
 
 def classifier_loss(pred, label):
     return -label * torch.log(pred) - (1 - label) * torch.log(1 - pred)
@@ -388,9 +329,12 @@ class NNSolver(nn.Module):
         self._args = args
         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
         layers = reduce(operator.add,
-            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.1)]
+            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-        layers += [nn.Linear(layer_sizes[-1], data.output_dim)]
+        
+        output_dim = data.ydim - data.nknowns - data.neq
+
+        layers += [nn.Linear(layer_sizes[-1], output_dim)]
 
         for layer in layers:
             if type(layer) == nn.Linear:
@@ -401,8 +345,10 @@ class NNSolver(nn.Module):
     def forward(self, x):
         out = self.net(x)
  
-        out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-        # return self._data.complete_partial(x, out)
+        if self._args['useCompl']:
+            if 'acopf' in self._args['probType']:
+                out = nn.Sigmoid()(out)   # used to interpolate between max and min values
+
         return out
     
 
@@ -430,7 +376,7 @@ def eval_net(data, X, solver_net, args, prefix, stats):
     end_time = time.time()
 
     dict_agg(stats, make_prefix('time'), end_time - start_time, op='sum')
-    # dict_agg(stats, make_prefix('loss'), total_loss(data, X, Y, lam, rho).detach().cpu().numpy())
+    dict_agg(stats, make_prefix('loss'), total_loss(data, X, Y, args).detach().cpu().numpy())
     dict_agg(stats, make_prefix('eval'), data.obj_fn(Y).detach().cpu().numpy())
     dict_agg(stats, make_prefix('ineq_max'), torch.max(data.ineq_dist(X, Y), dim=1)[0].detach().cpu().numpy())
     dict_agg(stats, make_prefix('ineq_mean'), torch.mean(data.ineq_dist(X, Y), dim=1).detach().cpu().numpy())
@@ -476,6 +422,9 @@ class BalancedBuffer:
         self.capacity = capacity
         self.buffer_0 = []
         self.buffer_1 = []
+    
+    def __len__(self):
+        return len(self.buffer_0) + len(self.buffer_1)
 
     def add(self, samples, labels):
         for i in range(samples.size(0)):
@@ -503,6 +452,87 @@ class BalancedBuffer:
         return sample[shuffle_idx], labels[shuffle_idx]
 
 
+class SupConLoss(nn.Module):
+    """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
+    It also supports the unsupervised contrastive loss in SimCLR"""
+    def __init__(self, temperature=1, contrast_mode='all',
+                 base_temperature=1):
+        super(SupConLoss, self).__init__()
+        self.temperature = temperature
+        self.contrast_mode = contrast_mode
+        self.base_temperature = base_temperature
+
+    def forward(self, features, labels=None):
+        device = (torch.device('cuda')
+                  if features.is_cuda
+                  else torch.device('cpu'))
+
+        # if len(features.shape) < 3:
+        #     raise ValueError('`features` needs to be [bsz, n_views, ...],'
+        #                      'at least 3 dimensions are required')
+        # if len(features.shape) > 3:
+        #     features = features.view(features.shape[0], features.shape[1], -1)
+        features = features.view(features.shape[0], features.shape[1], -1)
+
+        batch_size = features.shape[0]
+        if labels is not None:
+            labels = labels.contiguous().view(-1, 1)
+            if labels.shape[0] != batch_size:
+                raise ValueError('Num of labels does not match num of features')
+            mask = torch.eq(labels, labels.T).float().to(device)
+        else:
+            raise ValueError('Cannot lable can not be None')
+
+        contrast_count = features.shape[1]
+        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
+        if self.contrast_mode == 'one':
+            anchor_feature = features[:, 0]
+            anchor_count = 1
+        elif self.contrast_mode == 'all':
+            anchor_feature = contrast_feature
+            anchor_count = contrast_count
+        else:
+            raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
+
+        # compute logits
+        anchor_dot_contrast = torch.div(
+            torch.matmul(anchor_feature, contrast_feature.T),
+            self.temperature)
+        # for numerical stability
+        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
+        logits = anchor_dot_contrast - logits_max.detach()
+
+        # tile mask
+        mask = mask.repeat(anchor_count, contrast_count)
+        # mask-out self-contrast cases
+        logits_mask = torch.scatter(
+            torch.ones_like(mask),
+            1,
+            torch.arange(batch_size * anchor_count).view(-1, 1).to(device),
+            0
+        )
+        mask = mask * logits_mask
+
+        # compute log_prob
+        exp_logits = torch.exp(logits) * logits_mask
+        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
+
+        # compute mean of log-likelihood over positive
+        # modified to handle edge cases when there is no positive pair
+        # for an anchor point. 
+        # Edge case e.g.:- 
+        # features of shape: [4,1,...]
+        # labels:            [0,1,1,2]
+        # loss before mean:  [nan, ..., ..., nan] 
+        mask_pos_pairs = mask.sum(1)
+        mask_pos_pairs = torch.where(mask_pos_pairs < 1e-6, 1, mask_pos_pairs)
+        mean_log_prob_pos = (mask * log_prob).sum(1) / mask_pos_pairs
+
+        # loss
+        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
+        loss = loss.view(anchor_count, batch_size).mean()
+
+        return loss
 
 if __name__=='__main__':
     main()
