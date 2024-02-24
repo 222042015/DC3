@@ -23,7 +23,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 def main():
     parser = argparse.ArgumentParser(description='DeepV_Multi')
     # parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='acopf39'
+    parser.add_argument('--probType', type=str, default='acopf300'
                         , help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -102,7 +102,7 @@ def main():
 
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
-    data = ACOPFProblem2(dataset, train_num=800, valid_num=100, test_num=100) #, valid_frac=0.05, test_frac=0.05)
+    data = ACOPFProblem2(dataset, train_num=100, valid_num=10, test_num=10) #, valid_frac=0.05, test_frac=0.05)
     data._device = DEVICE
     print(DEVICE)
     for attr in dir(data):
@@ -145,11 +145,6 @@ def train_net(data, args, save_dir):
     classifier.to(DEVICE)
     classifier_opt = optim.Adam(classifier.parameters(), lr=5e-4)
 
-    # classifier_copy = Classifier(data, args)
-    # classifier_copy.to(DEVICE)
-    # classifier_copy.load_state_dict(classifier.state_dict())
-    # for param in classifier_copy.parameters():
-    #     param.requires_grad = False
     buffer = BalancedBuffer(5000)
 
     stats = {}
@@ -185,20 +180,42 @@ def train_net(data, args, save_dir):
             Yhat_prob = solver_net(Xtrain)
             Yhat_partial_train = data.scale_partial(Yhat_prob)
             Yhat_train, converged = data.complete_partial(Xtrain, Yhat_partial_train)
-            train_loss = total_loss(data, Xtrain, Yhat_train, args)
             buffer.add(Yhat_prob, converged)
+            # train_loss = total_loss(data, Xtrain, Yhat_train, args)
 
+            # random generate random samples uniformly from [0,1] with the same shape as Yhat_prob
+            Yhat_prob_random = torch.rand_like(Yhat_prob)
+            Yhat_prob_partial_random = data.scale_partial(Yhat_prob_random)
+            Yhat_random, _ = data.complete_partial(Xtrain, Yhat_prob_partial_random)
+
+            # select only the feasible solutions
+            if converged.sum() > 0:
+                Xtrain_conv = Xtrain[converged.bool(), :]
+                Yhat_train_conv = Yhat_train[converged.bool(), :]
+                train_loss = total_loss(data, Xtrain_conv, Yhat_train_conv, args)
+            
+
+            # elif len(buffer.buffer_0) > 0 and len(buffer.buffer_1) == 0: # if there are no feasible solutions, use the contrastive learning loss, 
+                # minimize the similarity between the predicted Yhat_prob and 
+                # negative samples in the buffer
+                # neg_samples, _ = buffer.sample_0(batch_size)
+                # sim_loss = nn.CosineEmbeddingLoss()
+                # train_loss = sim_loss(Yhat_prob, neg_samples, -torch.ones(batch_size, device=DEVICE)).unsqueeze(0)
+                # Xtrain_recover = data.recover_load(Yhat_train)
+                # Yprob_recover = solver_net(Xtrain_recover)
+                # # train the model Xtrain_recover and Yhat_train with mse loss
+                # train_loss = nn.MSELoss(reduction='mean')(Yprob_recover, Yhat_prob).unsqueeze(0)      
 
 
             # add classifer loss to the loss to drive the model to predict feasible solutions
-            if i >= 10 and len(buffer.buffer_0) > 0 and len(buffer.buffer_1) > 0:
-                feasible = classifier(Yhat_prob).squeeze(-1)
-                label = torch.ones(feasible.shape, device=DEVICE, dtype=torch.long)
-                class_loss = classifier_loss(feasible, label).mean()
-                # append the class_loss to the train_loss
-                train_loss = torch.cat((train_loss, class_loss.unsqueeze(0)))
+            # if i >= 1 and len(buffer.buffer_0) > 0 and len(buffer.buffer_1) > 0:
+            #     feasible = classifier(Yhat_prob).squeeze(-1)
+            #     label = torch.ones(feasible.shape, device=DEVICE, dtype=torch.long)
+            #     class_loss = classifier_loss(feasible, label).mean() * 100
+            #     # append the class_loss to the train_loss
+            #     train_loss = torch.cat((train_loss, class_loss.unsqueeze(0)))
 
-            if flag or i == 10: # reinitialize weights after updating the factor
+            if flag or i == 1: # reinitialize weights after updating the factor
                 weights = torch.ones_like(train_loss)
                 weights = torch.nn.Parameter(weights)
                 T = weights.sum().detach()
@@ -264,12 +281,13 @@ def train_net(data, args, save_dir):
             args['factor'] = args['factor'] * 1.2
             flag = True
 
-        if i <= 10 or (i+1)%10 == 0:
+        # if i <= 10 or (i+1)%10 == 0:
+        if 1:
             # train the classifier
             classifier.train()
             solver_net.eval()
             class_loss = []
-            for s in range(1000):
+            for s in range(100):
                 if len(buffer.buffer_0) == 0 or len(buffer.buffer_1) == 0:
                     break
                 # sample the data from the buffer
@@ -280,15 +298,9 @@ def train_net(data, args, save_dir):
                 loss.mean().backward()
                 classifier_opt.step()
                 class_loss.append(loss.mean().detach().cpu().numpy())
-                # dict_agg(epoch_stats, 'train_classifier_loss', loss.squeeze().detach().cpu().numpy())
-                if s % 100 == 0:
+                if (s+1) % 100 == 0:
                     print('Epoch {}: train classifier loss {:.4f}'.format(s, np.mean(class_loss)))
 
-                # classifier_copy.load_state_dict(classifier.state_dict())
-
-
-        
-            
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
         pickle.dump(stats, f)
@@ -302,21 +314,20 @@ def log_barrier_vectorized(z, t):
 
 def total_loss(data, X, Y, args):
     t = args['factor']
-    obj_cost = data.obj_fn(Y).mean(dim=0) #* 100
-    # max of 0 and the obj_cost
-    # obj_cost = torch.max(data.obj_fn(Y).mean(dim=0) * 100, torch.tensor(100, device=DEVICE))
+    obj_cost = data.obj_fn(Y).mean(dim=0) * 100
+
     ineq_resid = data.ineq_resid(X, Y)
     ineq_resid_bar = torch.zeros_like(ineq_resid)
     for i in range(ineq_resid.shape[0]):
         ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], t)
     ineq_resid_bar = ineq_resid_bar.sum(dim=1).mean(dim=0)
 
-    # append obj_cost to ineq_resid_bar
     loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0)))
-
     return loss
 
 def classifier_loss(pred, label):
+    pred = torch.clamp(pred, 1e-7, 1 - 1e-7)
+
     return -label * torch.log(pred) - (1 - label) * torch.log(1 - pred)
 
 
@@ -450,6 +461,11 @@ class BalancedBuffer:
         labels = torch.cat((labels_0, labels_1), 0)
         shuffle_idx = torch.randperm(sample.shape[0])
         return sample[shuffle_idx], labels[shuffle_idx]
+    
+    def sample_0(self, batch_size):
+        samples_0 = torch.stack(random.sample(self.buffer_0, min(len(self.buffer_0), batch_size)))
+        labels_0 = torch.zeros(samples_0.shape[0], device=DEVICE)
+        return samples_0, labels_0
 
 
 class SupConLoss(nn.Module):
@@ -466,12 +482,7 @@ class SupConLoss(nn.Module):
         device = (torch.device('cuda')
                   if features.is_cuda
                   else torch.device('cpu'))
-
-        # if len(features.shape) < 3:
-        #     raise ValueError('`features` needs to be [bsz, n_views, ...],'
-        #                      'at least 3 dimensions are required')
-        # if len(features.shape) > 3:
-        #     features = features.view(features.shape[0], features.shape[1], -1)
+        
         features = features.view(features.shape[0], features.shape[1], -1)
 
         batch_size = features.shape[0]
