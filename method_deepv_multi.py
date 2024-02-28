@@ -147,7 +147,7 @@ def train_net(data, args, save_dir):
     classifier.to(DEVICE)
     classifier_opt = optim.Adam(classifier.parameters(), lr=5e-4)
 
-    buffer = BalancedBuffer(5000)
+    buffer = BalancedBuffer(2000)
 
     try:
         state_dict = torch.load('model_weights.pth')
@@ -385,68 +385,6 @@ class NNSolver(nn.Module):
         elif 'acopf' in prob_type:
             out = self.net(x)
             return nn.Sigmoid()(out)
-        #     data = self._data
-        #     out2 = nn.Sigmoid()(out[:, :-data.nbus])
-        #     pg = out2[:, :data.ng] * data.pmax + (1-out2[:, :data.ng]) * data.pmin
-        #     qg = out2[:, data.ng:2*data.ng] * data.qmax + (1-out2[:, data.ng:2*data.ng]) * data.qmin
-        #     vm = out2[:, 2*data.ng:] * data.vmax + (1- out2[:, 2*data.ng:]) * data.vmin
-        #     return torch.cat([pg, qg, vm, out[:, -data.nbus:]], dim=1)
-        # else:
-        #     raise NotImplementedError
-
-# class NNSolver(nn.Module):
-#     def __init__(self, data, args):
-#         super().__init__()
-#         self._data = data
-#         self._args = args
-#         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
-#         layers = reduce(operator.add,
-#             [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
-#                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-        
-#         output_dim = data.ydim - data.nknowns - data.neq
-
-#         layers += [nn.Linear(layer_sizes[-1], output_dim)]
-
-#         for layer in layers:
-#             if type(layer) == nn.Linear:
-#                 nn.init.kaiming_normal_(layer.weight)
-
-#         self.net = nn.Sequential(*layers)
-
-#     def forward(self, x):
-#         out = self.net(x)
- 
-#         if self._args['useCompl']:
-#             if 'acopf' in self._args['probType']:
-#                 out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-
-#         return out
-
-# class NNSolver(nn.Module):
-#     def __init__(self, data, args):
-#         super().__init__()
-#         self._data = data
-#         self._args = args
-#         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
-#         layers = reduce(operator.add,
-#             [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.1)]
-#                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-#         layers += [nn.Linear(layer_sizes[-1], data.output_dim)]
-
-#         for layer in layers:
-#             if type(layer) == nn.Linear:
-#                 nn.init.kaiming_normal_(layer.weight)
-
-#         self.net = nn.Sequential(*layers)
-
-#     def forward(self, x):
-#         out = self.net(x)
- 
-#         out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-#         # return self._data.complete_partial(x, out)
-#         return out
-    
 
 # Modifies stats in place
 def dict_agg(stats, key, value, op='concat'):
@@ -502,8 +440,6 @@ class Classifier(nn.Module):
         output_dim = data.ydim - data.nknowns - data.neq
 
         layers = [nn.Linear(output_dim, 200), nn.LeakyReLU(), nn.Linear(200, 1), nn.Sigmoid()]
-        # layers = [nn.Linear(output_dim+data.xdim, 200), nn.LeakyReLU(), nn.Linear(200, 1), nn.Sigmoid()]
-
 
         for layer in layers:
             if type(layer) == nn.Linear:
@@ -558,84 +494,6 @@ class BalancedBuffer:
         samples_1 = torch.stack(random.sample(self.buffer_1, min(len(self.buffer_1), batch_size)))
         labels_1 = torch.zeros(samples_1.shape[0], device=DEVICE)
         return samples_1, labels_1
-
-
-class SupConLoss(nn.Module):
-    """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
-    It also supports the unsupervised contrastive loss in SimCLR"""
-    def __init__(self, temperature=0.5, contrast_mode='all',
-                 base_temperature=0.5):
-        super(SupConLoss, self).__init__()
-        self.temperature = temperature
-        self.contrast_mode = contrast_mode
-        self.base_temperature = base_temperature
-
-    def forward(self, features, labels=None):
-        device = (torch.device('cuda')
-                  if features.is_cuda
-                  else torch.device('cpu'))
-        
-        features = features.view(features.shape[0], features.shape[1], -1)
-
-        batch_size = features.shape[0]
-        if labels is not None:
-            labels = labels.contiguous().view(-1, 1)
-            if labels.shape[0] != batch_size:
-                raise ValueError('Num of labels does not match num of features')
-            mask = torch.eq(labels, labels.T).float().to(device)
-        else:
-            raise ValueError('Cannot lable can not be None')
-
-        contrast_count = features.shape[1]
-        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
-        if self.contrast_mode == 'one':
-            anchor_feature = features[:, 0]
-            anchor_count = 1
-        elif self.contrast_mode == 'all':
-            anchor_feature = contrast_feature
-            anchor_count = contrast_count
-        else:
-            raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
-
-        # compute logits
-        anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_feature, contrast_feature.T),
-            self.temperature)
-        # for numerical stability
-        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
-        logits = anchor_dot_contrast - logits_max.detach()
-
-        # tile mask
-        mask = mask.repeat(anchor_count, contrast_count)
-        # mask-out self-contrast cases
-        logits_mask = torch.scatter(
-            torch.ones_like(mask),
-            1,
-            torch.arange(batch_size * anchor_count).view(-1, 1).to(device),
-            0
-        )
-        mask = mask * logits_mask
-
-        # compute log_prob
-        exp_logits = torch.exp(logits) * logits_mask
-        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
-
-        # compute mean of log-likelihood over positive
-        # modified to handle edge cases when there is no positive pair
-        # for an anchor point. 
-        # Edge case e.g.:- 
-        # features of shape: [4,1,...]
-        # labels:            [0,1,1,2]
-        # loss before mean:  [nan, ..., ..., nan] 
-        mask_pos_pairs = mask.sum(1)
-        mask_pos_pairs = torch.where(mask_pos_pairs < 1e-6, 1, mask_pos_pairs)
-        mean_log_prob_pos = (mask * log_prob).sum(1) / mask_pos_pairs
-
-        # loss
-        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
-        loss = loss.view(anchor_count, batch_size).mean()
-
-        return loss
 
 if __name__=='__main__':
     main()
