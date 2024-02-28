@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 torch.set_default_dtype(torch.float64)
 
+from collections import OrderedDict
 import operator
 from functools import reduce
 from torch.utils.data import TensorDataset, DataLoader
@@ -115,6 +116,7 @@ def main():
 
     save_dir = os.path.join('results', str(data), 'method_deepv_multi', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
+    print(save_dir)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     with open(os.path.join(save_dir, 'args.dict'), 'wb') as f:
@@ -125,7 +127,7 @@ def main():
 
 def train_net(data, args, save_dir):
     solver_step = args['lr']
-    nepochs = args['epochs']
+    nepochs = 2000 #args['epochs']
     batch_size = 100
     solver_step = 0.0005
 
@@ -147,13 +149,24 @@ def train_net(data, args, save_dir):
 
     buffer = BalancedBuffer(5000)
 
+    try:
+        state_dict = torch.load('model_weights.pth')
+    except:
+        raise ValueError('No model weights found')
+    
+    for name, param in solver_net.named_parameters():
+        if 'output' in name:
+            param.data = state_dict[name][data._partial_unknown_vars]
+        elif name in state_dict:
+            param.data = state_dict[name]
+
     stats = {}
     iters = 0
     factor = 1
     args['factor'] = factor
     flag = True
 
-    contrastive_loss = SupConLoss()
+
     for i in range(nepochs):
         epoch_stats = {}
 
@@ -181,41 +194,35 @@ def train_net(data, args, save_dir):
             Yhat_partial_train = data.scale_partial(Yhat_prob)
             Yhat_train, converged = data.complete_partial(Xtrain, Yhat_partial_train)
             buffer.add(Yhat_prob, converged)
-            # train_loss = total_loss(data, Xtrain, Yhat_train, args)
+            train_loss = total_loss(data, Xtrain, Yhat_train, args)
 
-            # random generate random samples uniformly from [0,1] with the same shape as Yhat_prob
-            Yhat_prob_random = torch.rand_like(Yhat_prob)
-            Yhat_prob_partial_random = data.scale_partial(Yhat_prob_random)
-            Yhat_random, _ = data.complete_partial(Xtrain, Yhat_prob_partial_random)
+            # if i <= 40 and converged.sum() > 0:
+            #     Xtrain_conv = Xtrain[converged.bool(), :]
+            #     Yhat_train_conv = Yhat_train[converged.bool(), :]
+            #     train_loss = total_loss(data, Xtrain_conv, Yhat_train_conv, args)
+            # else:
+            #     train_loss = total_loss(data, Xtrain, Yhat_train, args)
 
-            # select only the feasible solutions
-            if converged.sum() > 0:
-                Xtrain_conv = Xtrain[converged.bool(), :]
-                Yhat_train_conv = Yhat_train[converged.bool(), :]
-                train_loss = total_loss(data, Xtrain_conv, Yhat_train_conv, args)
-            
-
-            # elif len(buffer.buffer_0) > 0 and len(buffer.buffer_1) == 0: # if there are no feasible solutions, use the contrastive learning loss, 
-                # minimize the similarity between the predicted Yhat_prob and 
-                # negative samples in the buffer
-                # neg_samples, _ = buffer.sample_0(batch_size)
-                # sim_loss = nn.CosineEmbeddingLoss()
-                # train_loss = sim_loss(Yhat_prob, neg_samples, -torch.ones(batch_size, device=DEVICE)).unsqueeze(0)
-                # Xtrain_recover = data.recover_load(Yhat_train)
-                # Yprob_recover = solver_net(Xtrain_recover)
-                # # train the model Xtrain_recover and Yhat_train with mse loss
-                # train_loss = nn.MSELoss(reduction='mean')(Yprob_recover, Yhat_prob).unsqueeze(0)      
-
-
-            # add classifer loss to the loss to drive the model to predict feasible solutions
-            # if i >= 1 and len(buffer.buffer_0) > 0 and len(buffer.buffer_1) > 0:
+            # # add classifer loss to the loss to drive the model to predict feasible solutions
+            # if i >= 20 and len(buffer.buffer_0) > 0 and len(buffer.buffer_1) > 0:
             #     feasible = classifier(Yhat_prob).squeeze(-1)
             #     label = torch.ones(feasible.shape, device=DEVICE, dtype=torch.long)
-            #     class_loss = classifier_loss(feasible, label).mean() * 100
+            #     class_loss = classifier_loss(feasible, label).mean() * 100000
             #     # append the class_loss to the train_loss
             #     train_loss = torch.cat((train_loss, class_loss.unsqueeze(0)))
 
-            if flag or i == 1: # reinitialize weights after updating the factor
+            # if i >= 20 and len(buffer.buffer_0) > 0 and len(buffer.buffer_1) > 0:
+            if 1:
+                # sample positive samples from buffer
+                samples, labels = buffer.sample(batch_size)
+                # replace 0 in labels with -1
+                labels[labels == 0] = -1
+                # compute the similarity loss between prediction and the samples
+                sim_loss = nn.CosineEmbeddingLoss()(Yhat_prob[:len(samples)], samples, labels) * 1e6
+                train_loss = torch.cat((train_loss, sim_loss.unsqueeze(0)))
+
+
+            if flag: # reinitialize weights after updating the factor
                 weights = torch.ones_like(train_loss)
                 weights = torch.nn.Parameter(weights)
                 T = weights.sum().detach()
@@ -281,25 +288,24 @@ def train_net(data, args, save_dir):
             args['factor'] = args['factor'] * 1.2
             flag = True
 
-        # if i <= 10 or (i+1)%10 == 0:
-        if 1:
-            # train the classifier
-            classifier.train()
-            solver_net.eval()
-            class_loss = []
-            for s in range(100):
-                if len(buffer.buffer_0) == 0 or len(buffer.buffer_1) == 0:
-                    break
-                # sample the data from the buffer
-                Xtrain, Ytrain = buffer.sample(200)
-                classifier_opt.zero_grad()
-                pred = classifier(Xtrain).squeeze(-1)
-                loss = classifier_loss(pred, Ytrain)
-                loss.mean().backward()
-                classifier_opt.step()
-                class_loss.append(loss.mean().detach().cpu().numpy())
-                if (s+1) % 100 == 0:
-                    print('Epoch {}: train classifier loss {:.4f}'.format(s, np.mean(class_loss)))
+        # if i <= 20 or i % 2 == 0:
+        #     # train the classifier
+        #     classifier.train()
+        #     solver_net.eval()
+        #     class_loss = []
+        #     for s in range(1000):
+        #         if len(buffer.buffer_0) == 0 or len(buffer.buffer_1) == 0:
+        #             break
+        #         # sample the data from the buffer
+        #         Xtrain, Ytrain = buffer.sample(200)
+        #         classifier_opt.zero_grad()
+        #         pred = classifier(Xtrain).squeeze(-1)
+        #         loss = classifier_loss(pred, Ytrain)
+        #         loss.mean().backward()
+        #         classifier_opt.step()
+        #         class_loss.append(loss.mean().detach().cpu().numpy())
+        #         if (s+1) % 100 == 0:
+        #             print('Epoch {}: train classifier loss {:.4f}'.format(s, np.mean(class_loss)))
 
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
@@ -314,7 +320,8 @@ def log_barrier_vectorized(z, t):
 
 def total_loss(data, X, Y, args):
     t = args['factor']
-    obj_cost = data.obj_fn(Y).mean(dim=0) * 100
+    # eq_cost = torch.norm(data.eq_resid(X, Y), dim=1).mean(dim=0)
+    obj_cost = data.obj_fn(Y).mean(dim=0)
 
     ineq_resid = data.ineq_resid(X, Y)
     ineq_resid_bar = torch.zeros_like(ineq_resid)
@@ -322,45 +329,123 @@ def total_loss(data, X, Y, args):
         ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], t)
     ineq_resid_bar = ineq_resid_bar.sum(dim=1).mean(dim=0)
 
-    loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0)))
+    loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0))) #, eq_cost.unsqueeze(0)))
     return loss
+
+def eq_loss(data, X, Y):
+    eq_resid = data.eq_resid(X, Y)
+    return torch.norm(eq_resid, dim=1).mean(dim=0)
 
 def classifier_loss(pred, label):
     pred = torch.clamp(pred, 1e-7, 1 - 1e-7)
 
     return -label * torch.log(pred) - (1 - label) * torch.log(1 - pred)
 
+def ineq_loss(data, X, Y, args):
+    t = args['factor']
+    ineq_resid = data.ineq_resid(X, Y)
+    ineq_resid_bar = torch.zeros_like(ineq_resid)
+    for i in range(ineq_resid.shape[0]):
+        ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], t)
+    ineq_resid_bar = ineq_resid_bar.sum(dim=1).mean(dim=0)
+
+    return ineq_resid_bar
+
 
 ######### Models
-
 class NNSolver(nn.Module):
     def __init__(self, data, args):
         super().__init__()
         self._data = data
         self._args = args
         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
-        layers = reduce(operator.add,
-            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
-                for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-        
+
         output_dim = data.ydim - data.nknowns - data.neq
 
-        layers += [nn.Linear(layer_sizes[-1], output_dim)]
+        dic = []
+        for i in range(len(layer_sizes)-1):
+            dic.append((f'linear{i}', nn.Linear(layer_sizes[i], layer_sizes[i+1])))
+            dic.append((f'batchnorm{i}', nn.BatchNorm1d(layer_sizes[i+1])))
+            dic.append((f'activation{i}', nn.ReLU()))
+            dic.append((f'dropout{i}', nn.Dropout(p=0.2)))
 
-        for layer in layers:
-            if type(layer) == nn.Linear:
-                nn.init.kaiming_normal_(layer.weight)
+        dic.append((f'linear_output', nn.Linear(layer_sizes[-1], output_dim)))
+        self.net = nn.Sequential(OrderedDict(dic))
 
-        self.net = nn.Sequential(*layers)
+        for name, param in self.net.named_parameters():
+            if "linear" in name and "weight" in name:
+                nn.init.kaiming_normal_(param)
 
     def forward(self, x):
-        out = self.net(x)
- 
-        if self._args['useCompl']:
-            if 'acopf' in self._args['probType']:
-                out = nn.Sigmoid()(out)   # used to interpolate between max and min values
+        prob_type = self._args['probType']
+        if prob_type == 'simple':
+            return self.net(x)
+        elif prob_type == 'nonconvex':
+            return self.net(x)
+        elif 'acopf' in prob_type:
+            out = self.net(x)
+            return nn.Sigmoid()(out)
+        #     data = self._data
+        #     out2 = nn.Sigmoid()(out[:, :-data.nbus])
+        #     pg = out2[:, :data.ng] * data.pmax + (1-out2[:, :data.ng]) * data.pmin
+        #     qg = out2[:, data.ng:2*data.ng] * data.qmax + (1-out2[:, data.ng:2*data.ng]) * data.qmin
+        #     vm = out2[:, 2*data.ng:] * data.vmax + (1- out2[:, 2*data.ng:]) * data.vmin
+        #     return torch.cat([pg, qg, vm, out[:, -data.nbus:]], dim=1)
+        # else:
+        #     raise NotImplementedError
 
-        return out
+# class NNSolver(nn.Module):
+#     def __init__(self, data, args):
+#         super().__init__()
+#         self._data = data
+#         self._args = args
+#         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
+#         layers = reduce(operator.add,
+#             [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
+#                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
+        
+#         output_dim = data.ydim - data.nknowns - data.neq
+
+#         layers += [nn.Linear(layer_sizes[-1], output_dim)]
+
+#         for layer in layers:
+#             if type(layer) == nn.Linear:
+#                 nn.init.kaiming_normal_(layer.weight)
+
+#         self.net = nn.Sequential(*layers)
+
+#     def forward(self, x):
+#         out = self.net(x)
+ 
+#         if self._args['useCompl']:
+#             if 'acopf' in self._args['probType']:
+#                 out = nn.Sigmoid()(out)   # used to interpolate between max and min values
+
+#         return out
+
+# class NNSolver(nn.Module):
+#     def __init__(self, data, args):
+#         super().__init__()
+#         self._data = data
+#         self._args = args
+#         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
+#         layers = reduce(operator.add,
+#             [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.1)]
+#                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
+#         layers += [nn.Linear(layer_sizes[-1], data.output_dim)]
+
+#         for layer in layers:
+#             if type(layer) == nn.Linear:
+#                 nn.init.kaiming_normal_(layer.weight)
+
+#         self.net = nn.Sequential(*layers)
+
+#     def forward(self, x):
+#         out = self.net(x)
+ 
+#         out = nn.Sigmoid()(out)   # used to interpolate between max and min values
+#         # return self._data.complete_partial(x, out)
+#         return out
     
 
 # Modifies stats in place
@@ -417,6 +502,8 @@ class Classifier(nn.Module):
         output_dim = data.ydim - data.nknowns - data.neq
 
         layers = [nn.Linear(output_dim, 200), nn.LeakyReLU(), nn.Linear(200, 1), nn.Sigmoid()]
+        # layers = [nn.Linear(output_dim+data.xdim, 200), nn.LeakyReLU(), nn.Linear(200, 1), nn.Sigmoid()]
+
 
         for layer in layers:
             if type(layer) == nn.Linear:
@@ -466,13 +553,18 @@ class BalancedBuffer:
         samples_0 = torch.stack(random.sample(self.buffer_0, min(len(self.buffer_0), batch_size)))
         labels_0 = torch.zeros(samples_0.shape[0], device=DEVICE)
         return samples_0, labels_0
+    
+    def sample_1(self, batch_size):
+        samples_1 = torch.stack(random.sample(self.buffer_1, min(len(self.buffer_1), batch_size)))
+        labels_1 = torch.zeros(samples_1.shape[0], device=DEVICE)
+        return samples_1, labels_1
 
 
 class SupConLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""
-    def __init__(self, temperature=1, contrast_mode='all',
-                 base_temperature=1):
+    def __init__(self, temperature=0.5, contrast_mode='all',
+                 base_temperature=0.5):
         super(SupConLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
