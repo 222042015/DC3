@@ -19,12 +19,14 @@ from utils import my_hash, str_to_bool, ACOPFProblem2
 import default_args
 import random
 
+import wandb
+
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='DeepV_Multi')
     # parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='acopf300'
+    parser.add_argument('--probType', type=str, default='acopf39'
                         , help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -103,7 +105,7 @@ def main():
 
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
-    data = ACOPFProblem2(dataset, train_num=500, valid_num=10, test_num=10) #, valid_frac=0.05, test_frac=0.05)
+    data = ACOPFProblem2(dataset, train_num=300, valid_num=10, test_num=10) #, valid_frac=0.05, test_frac=0.05)
     data._device = DEVICE
     print(DEVICE)
     for attr in dir(data):
@@ -123,7 +125,10 @@ def main():
         pickle.dump(args, f)
     
     # Run method
-    train_net(data, args, save_dir)
+    # train_net(data, args, save_dir)
+    with wandb.init(project='deepv_multi', config=args):
+        config = wandb.config
+        solver_net, stats = train_net(data, args, save_dir)
 
 # def train_net(data, args, save_dir):
 #     solver_step = args['lr']
@@ -343,16 +348,16 @@ def train_net(data, args, save_dir):
 
 
     # load the weights from pure NN network
-    try:
-        state_dict = torch.load('model_weights.pth')
-    except:
-        raise ValueError('No model weights found')
+    # try:
+    #     state_dict = torch.load('model_weights.pth')
+    # except:
+    #     raise ValueError('No model weights found')
     
-    for name, param in solver_net.named_parameters():
-        if 'output' in name:
-            param.data = state_dict[name][data._partial_unknown_vars]
-        elif name in state_dict:
-            param.data = state_dict[name]
+    # for name, param in solver_net.named_parameters():
+    #     if 'output' in name:
+    #         param.data = state_dict[name][data._partial_unknown_vars]
+    #     elif name in state_dict:
+    #         param.data = state_dict[name]
 
     stats = {}
     iters = 0
@@ -396,6 +401,8 @@ def train_net(data, args, save_dir):
             # train_loss = total_loss(data, Xtrain, Yhat_train, args)
 
             for s in range(3):
+                if len(buffer.buffer_0) == 0 or len(buffer.buffer_1) == 0:
+                    break
                 classifier.zero_grad()
                 # train the classifier
                 # sample true samples from the buffer
@@ -407,28 +414,29 @@ def train_net(data, args, save_dir):
                 # sample false samples from the buffer
                 samples_0, labels_0 = buffer.sample_0(samples_1.shape[0])
                 output = classifier(samples_0).view(-1)
-                # labels = torch.zeros(Yhat_prob.shape[0], device=DEVICE)
-                # output = classifier(Yhat_prob.detach()).view(-1)
                 errC_fake = criterion(output, labels_0).view(-1)
                 errC_fake.backward()
                 errC = errC_real + errC_fake
                 classifier_opt.step()
-                print('Epoch {}: train classifier loss {:.4f}'.format(s, errC.mean().detach().cpu().numpy()))
+                # print('Epoch {}: train classifier loss {:.4f}'.format(s, errC.mean().detach().cpu().numpy()))
 
             ## update the solver_net, maximize log(D(G(z)))
             # solver_net.train()
             # classifier.eval()
             true_label = torch.ones(converged.shape, device=DEVICE)
             output = classifier(Yhat_prob).view(-1)
-            errSolver = criterion(output, true_label).view(-1)
-            errSolver.backward()
-            train_loss = errSolver
+            errSolver = criterion(output, true_label).view(-1) * 1e6
+            # errSolver.backward()
+            train_loss = total_loss(data, Xtrain, Yhat_train, args)
+            train_loss = torch.cat((train_loss, errSolver))
+            train_loss.sum().backward()
             solver_opt.step()
             
 
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.sum().unsqueeze(0).detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
+            dict_agg(epoch_stats, 'train_nonconverged', torch.sum(converged == 0).unsqueeze(0).detach().cpu().numpy())
 
         if i <= 10:
             continue
@@ -438,7 +446,12 @@ def train_net(data, args, save_dir):
                 np.mean(epoch_stats['valid_ineq_max']),
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
                 np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
-
+        wandb.log({'train_loss': np.mean(epoch_stats['train_loss']), 'eval': np.mean(epoch_stats['valid_eval']), 
+                   'ineq_max': np.mean(epoch_stats['valid_ineq_max']), 
+                   'ineq_mean': np.mean(epoch_stats['valid_ineq_mean']), 
+                   'ineq_num_viol_0': np.mean(epoch_stats['valid_ineq_num_viol_0']), 
+                   'eq_max': np.mean(epoch_stats['valid_eq_max']), 'nonconverged': np.mean(epoch_stats['train_nonconverged']),
+                   'time': np.mean(epoch_stats['valid_time'])}, step=i)
 
         # if args['saveAllStats']:
         #     # if i == 0:
@@ -474,7 +487,7 @@ def log_barrier_vectorized(z, t):
 def total_loss(data, X, Y, args):
     t = args['factor']
     # eq_cost = torch.norm(data.eq_resid(X, Y), dim=1).mean(dim=0)
-    obj_cost = data.obj_fn(Y).mean(dim=0)
+    obj_cost = data.obj_fn(Y).mean(dim=0) / 1000
 
     ineq_resid = data.ineq_resid(X, Y)
     ineq_resid_bar = torch.zeros_like(ineq_resid)
