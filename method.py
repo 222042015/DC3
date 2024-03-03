@@ -17,6 +17,8 @@ import argparse
 from utils import my_hash, str_to_bool, ACOPFProblem
 import default_args
 
+import wandb
+
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
@@ -99,7 +101,7 @@ def main():
 
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
-    data = ACOPFProblem(dataset, train_num=100, valid_num=5, test_num=5) #, valid_frac=0.05, test_frac=0.05)
+    data = ACOPFProblem(dataset, train_num=1000, valid_num=50, test_num=50) #, valid_frac=0.05, test_frac=0.05)
     data._device = DEVICE
     print(DEVICE)
     for attr in dir(data):
@@ -118,7 +120,10 @@ def main():
         pickle.dump(args, f)
     
     # Run method
-    train_net(data, args, save_dir)
+    with wandb.init(project=prob_type, config=args, name="DC3"):
+        args = wandb.config
+        solver_net, stats = train_net(data, args, save_dir)
+
 
 
 def train_net(data, args, save_dir):
@@ -176,6 +181,16 @@ def train_net(data, args, save_dir):
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
                 np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time'])))
 
+        wandb.log({'train_loss': np.mean(epoch_stats['train_loss']),
+                   'valid_eval': np.mean(epoch_stats['valid_eval']),
+                   'valid_dist': np.mean(epoch_stats['valid_dist']),
+                   'valid_ineq_max': np.mean(epoch_stats['valid_ineq_max']),
+                   'valid_ineq_mean': np.mean(epoch_stats['valid_ineq_mean']),
+                   'valid_eq_max': np.mean(epoch_stats['valid_eq_max']),
+                   'valid_steps': np.mean(epoch_stats['valid_steps']),
+                   'valid_time': np.mean(epoch_stats['valid_time']),
+                   'train_time': np.mean(epoch_stats['train_time'])})
+
         if args['saveAllStats']:
             if i == 0:
                 for key in epoch_stats.keys():
@@ -197,6 +212,10 @@ def train_net(data, args, save_dir):
         pickle.dump(stats, f)
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
+    
+    torch.save(solver_net.state_dict(), os.path.join(wandb.run.dir, 'model_weights.pth'))
+
+    wandb.finish()
     return solver_net, stats
 
 # Modifies stats in place
