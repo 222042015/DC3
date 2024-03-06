@@ -17,13 +17,11 @@ import argparse
 from utils import my_hash, str_to_bool, ACOPFProblem
 import default_args
 
-from torch.utils.tensorboard import SummaryWriter
-
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='DeepLDE')
-    parser.add_argument('--probType', type=str, default='acopf118',help='problem type')
+    parser.add_argument('--probType', type=str, default='acopf57',help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -69,8 +67,9 @@ def main():
         help='initial lambda')
     parser.add_argument('--gamma', type=float,
         help='Decrements of step size')
-    parser.add_argument('--useLU', type=str_to_bool, default=True,
-        help='whether to use LU decomposition')
+
+    parser.add_argument('--sample', type=str, default='truncated_normal',
+        help='how to sample data for acopf problems')
     
 
     args = parser.parse_args()
@@ -92,17 +91,19 @@ def main():
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif 'acopf' in prob_type:
-        if args['useLU']:
+        if args['sample'] == 'uniform':
             filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
-        else:
-            NotImplementedError
+        elif args['sample'] == 'truncated_normal':
+            filepath = os.path.join('datasets', 'acopf_T', prob_type+'_dataset')
     else:
         raise NotImplementedError
     # read the data and transfer to GPU
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
     
-    data = ACOPFProblem(dataset, train_num=1000, valid_num=100, test_num=100) #, valid_frac=0.05, test_frac=0.05)
+    with open(filepath, 'rb') as f:
+        dataset = pickle.load(f)
+    data = ACOPFProblem(dataset, train_num=1000, valid_num=50, test_num=50) #, valid_frac=0.05, test_frac=0.05)
     data._device = DEVICE
     print(DEVICE)
     for attr in dir(data):
@@ -194,12 +195,6 @@ def train_net(data, args, save_dir):
                     np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
                     np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
 
-            # write to tensorboard
-            # writer.add_scalar('train_loss', np.mean(epoch_stats['train_loss']), step)
-            # writer.add_scalar('valid_eval', np.mean(epoch_stats['valid_eval']), step)
-            # writer.add_scalar('valid_ineq_max', np.mean(epoch_stats['valid_ineq_max']), step)
-            # writer.add_scalar('valid_ineq_mean', np.mean(epoch_stats['valid_ineq_mean']), step)
-            # writer.add_scalar('valid_eq_max', np.mean(epoch_stats['valid_eq_max']), step)
 
             if args['saveAllStats']:
                 if t == 0 and i == 0:
