@@ -78,6 +78,11 @@ def main():
     parser.add_argument('--resultsSaveFreq', type=int,
         help='how frequently (in terms of number of epochs) to save stats to file')
 
+    # parser.add_argument('--sample', type=str, default='truncated_normal',
+    #     help='how to sample data for acopf problems')
+    parser.add_argument('--sample', type=str, default='uniform',
+        help='how to sample data for acopf problems')
+
     args = parser.parse_args()
     args = vars(args) # change to dictionary
     # defaults = default_args.deepv_default_args(args['probType'])
@@ -98,7 +103,10 @@ def main():
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif 'acopf' in prob_type:
-        filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        if args['sample'] == 'uniform':
+            filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        elif args['sample'] == 'truncated_normal':
+            filepath = os.path.join('datasets', 'acopf_T', prob_type+'_dataset')
     else:
         raise NotImplementedError
 
@@ -122,18 +130,20 @@ def main():
         os.makedirs(save_dir)
     with open(os.path.join(save_dir, 'args.dict'), 'wb') as f:
         pickle.dump(args, f)
+
+    args['save_dir'] = save_dir
     
     # Run method
     # train_net(data, args, save_dir)
-    with wandb.init(project='deepv_multi', config=args, name=prob_type+"_converge"):
+    with wandb.init(project=prob_type+'_'+args['sample'], config=args, name="multi_converge"):
         config = wandb.config
         solver_net, stats = train_net(data, args, save_dir)
 
 def train_net(data, args, save_dir):
     solver_step = args['lr']
-    nepochs = 2000 #args['epochs']
-    batch_size = 100
-    solver_step = 0.0001
+    nepochs = 1000 #args['epochs']
+    batch_size = 200
+    solver_step = 0.0005
 
     train_dataset = TensorDataset(data.trainX)
     valid_dataset = TensorDataset(data.validX)
@@ -146,10 +156,11 @@ def train_net(data, args, save_dir):
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
-
+    scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=20, gamma=0.95)
     # load the weights from pure NN network
     # try:
-    #     state_dict = torch.load('model_weights.pth')
+    #     # state_dict = torch.load('model_weights.pth')
+    #     state_dict = torch.load("/home/jxxiong/A-xjx/DC3/wandb/run-20240305_154658-3qjdpkjm/files/model_weights.pth")
     # except:
     #     raise ValueError('No model weights found')
     
@@ -158,6 +169,8 @@ def train_net(data, args, save_dir):
     #         param.data = state_dict[name][data._partial_unknown_vars]
     #     elif name in state_dict:
     #         param.data = state_dict[name]
+
+    # solver_net.load_state_dict(torch.load("/home/jxxiong/A-xjx/DC3/wandb/run-20240301_233540-liyqkk29/files/solver_net.pth"))
 
     stats = {}
     factor = 1
@@ -175,8 +188,7 @@ def train_net(data, args, save_dir):
         for Xtrain in train_loader:
             Xtrain = Xtrain[0].to(DEVICE)
             start_time = time.time()
-
-            solver_net.zero_grad()
+        
 
             Yhat_prob = solver_net(Xtrain)
             Yhat_partial_train = data.scale_partial(Yhat_prob)
@@ -186,46 +198,52 @@ def train_net(data, args, save_dir):
                 Xtrain_conv = Xtrain[converged.bool(), :]
                 Yhat_train_conv = Yhat_train[converged.bool(), :]
                 train_loss = total_loss(data, Xtrain_conv, Yhat_train_conv, args)
-            
-            if flag: # reinitialize weights after updating the factor
-                weights = torch.ones_like(train_loss)
-                weights = torch.nn.Parameter(weights)
-                T = weights.sum().detach()
-                optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
-                l0 = train_loss.detach()
-                flag = False
-            
-            weighted_loss = (weights * train_loss).sum()
-            solver_opt.zero_grad()
-            weighted_loss.backward(retain_graph=True)
 
-            gw = []
-            for ii in range(len(train_loss)):
-                dl = torch.autograd.grad(weights[ii] * train_loss[ii], solver_net.parameters(), retain_graph=True, create_graph=True)[0]
-                gw.append(torch.norm(dl))
-            
-            gw = torch.stack(gw)
-            loss_ratio = train_loss.detach() / l0
-            rt = loss_ratio / loss_ratio.mean()
-            gw_avg = gw.mean().detach()
-            constant = (gw_avg * rt ** 0.01).detach()
-            gradnorm_loss = torch.abs(gw - constant).sum()
-            optimizer_gradnorm.zero_grad()
-            gradnorm_loss.backward()
-            optimizer_gradnorm.step()
+            solver_net.zero_grad()
+            train_loss.sum().backward()
             solver_opt.step()
-            optimizer_gradnorm.step()
+            
+            # if flag: # reinitialize weights after updating the factor
+            #     weights = torch.ones_like(train_loss)
+            #     weights = torch.nn.Parameter(weights)
+            #     T = weights.sum().detach()
+            #     optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
+            #     l0 = train_loss.detach()
+            #     flag = False
+        
+            
+            # weighted_loss = (weights * train_loss).sum()
+            # solver_opt.zero_grad()
+            # weighted_loss.backward(retain_graph=True)
 
-            weights = (T * weights / weights.sum()).detach()
-            weights = torch.nn.Parameter(weights)
-            optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
-            iters += 1
+            # gw = []
+            # for ii in range(len(train_loss)):
+            #     dl = torch.autograd.grad(weights[ii] * train_loss[ii], solver_net.parameters(), retain_graph=True, create_graph=True)[0]
+            #     gw.append(torch.norm(dl))
+            
+            # gw = torch.stack(gw)
+            # loss_ratio = train_loss.detach() / l0
+            # rt = loss_ratio / loss_ratio.mean()
+            # gw_avg = gw.mean().detach()
+            # constant = (gw_avg * rt ** 0.01).detach()
+            # gradnorm_loss = torch.abs(gw - constant).sum()
+            # optimizer_gradnorm.zero_grad()
+            # gradnorm_loss.backward()
+            # optimizer_gradnorm.step()
+            # solver_opt.step()
+            # optimizer_gradnorm.step()
+
+            # weights = (T * weights / weights.sum()).detach()
+            # weights = torch.nn.Parameter(weights)
+            # optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
+            # iters += 1
             
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.sum().unsqueeze(0).detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
             dict_agg(epoch_stats, 'train_nonconverged', torch.sum(converged == 0).unsqueeze(0).detach().cpu().numpy())
 
+        scheduler.step()
         # Get valid loss
         solver_net.eval()
         for Xvalid in valid_loader:
@@ -244,12 +262,15 @@ def train_net(data, args, save_dir):
                 np.mean(epoch_stats['valid_ineq_max']),
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
                 np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
-        wandb.log({'train_loss': np.mean(epoch_stats['train_loss']), 'eval': np.mean(epoch_stats['valid_eval']), 
-                   'ineq_max': np.mean(epoch_stats['valid_ineq_max']), 
-                   'ineq_mean': np.mean(epoch_stats['valid_ineq_mean']), 
-                   'ineq_num_viol_0': np.mean(epoch_stats['valid_ineq_num_viol_0']), 
-                   'eq_max': np.mean(epoch_stats['valid_eq_max']), 'nonconverged': np.mean(epoch_stats['train_nonconverged']),
-                   'time': np.mean(epoch_stats['valid_time'])}, step=i)
+        wandb.log({'train_loss': np.mean(epoch_stats['train_loss']), 
+                   'valid_eval': np.mean(epoch_stats['valid_eval']), 
+                   'valid_ineq_max': np.mean(epoch_stats['valid_ineq_max']), 
+                   'valid_ineq_mean': np.mean(epoch_stats['valid_ineq_mean']), 
+                   'valid_eq_max': np.mean(epoch_stats['valid_eq_max']), 
+                   'train_nonconverged': np.mean(epoch_stats['train_nonconverged']),
+                   'valid_time': np.mean(epoch_stats['valid_time']),
+                   'train_time': np.mean(epoch_stats['train_time']),
+                   'valid_ineq_num_viol': np.mean(epoch_stats['valid_ineq_num_viol_0'])})
 
         if args['saveAllStats']:
             if i == 0:
@@ -262,19 +283,26 @@ def train_net(data, args, save_dir):
             stats = epoch_stats
 
         if (i % args['resultsSaveFreq'] == 0):
+            torch.save(solver_net.state_dict(), os.path.join(wandb.run.dir, 'solver_net.pth'))
             with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
                 pickle.dump(stats, f)
             with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
                 torch.save(solver_net.state_dict(), f)
+            
+            torch.save(solver_net.state_dict(), os.path.join(save_dir, 'solver_net_1000.pth'))
+            torch.save(solver_net.state_dict(), os.path.join(wandb.run.dir, 'solver_net_1000.pth'))
         
         if (i+1) % 20 == 0:
-            args['factor'] = args['factor'] * 1.2
+            args['factor'] = min(1e7, args['factor'] * 1.2)
             flag = True
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
         pickle.dump(stats, f)
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
+    
+    torch.save(solver_net.state_dict(), os.path.join(save_dir, 'solver_net.pth'))
+    torch.save(solver_net.state_dict(), os.path.join(wandb.run.dir, 'solver_net.pth'))
     return solver_net, stats
 
 def log_barrier_vectorized(z, t):
@@ -283,7 +311,7 @@ def log_barrier_vectorized(z, t):
 
 def total_loss(data, X, Y, args):
     t = args['factor']
-    obj_cost = data.obj_fn(Y).mean(dim=0)
+    obj_cost = data.obj_fn(Y).mean(dim=0) * 10
 
     ineq_resid = data.ineq_resid(X, Y)
     ineq_resid_bar = torch.zeros_like(ineq_resid)
@@ -292,11 +320,8 @@ def total_loss(data, X, Y, args):
     ineq_resid_bar = ineq_resid_bar.sum(dim=1).mean(dim=0)
 
     loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0)))
-    return loss
 
-def eq_loss(data, X, Y):
-    eq_resid = data.eq_resid(X, Y)
-    return torch.norm(eq_resid, dim=1).mean(dim=0)
+    return loss
 
 
 ######### Models
