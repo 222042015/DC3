@@ -15,7 +15,7 @@ from setproctitle import setproctitle
 import os
 import argparse
 
-from utils import my_hash, str_to_bool, ACOPFProblem2
+from utils import my_hash, str_to_bool, ACOPFProblem
 import default_args
 import random
 
@@ -25,7 +25,6 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='DeepV_Multi')
-    # parser = argparse.ArgumentParser(description='DC3')
     parser.add_argument('--probType', type=str, default='acopf39'
                         , help='problem type')
     parser.add_argument('--simpleVar', type=int, 
@@ -78,6 +77,9 @@ def main():
         help='whether to save all stats, or just those from latest epoch')
     parser.add_argument('--resultsSaveFreq', type=int,
         help='how frequently (in terms of number of epochs) to save stats to file')
+    
+    parser.add_argument('--sample', type=str, default='uniform',
+        help='how to sample data for acopf problems')
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
@@ -99,13 +101,16 @@ def main():
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif 'acopf' in prob_type:
-        filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        if args['sample'] == 'uniform':
+            filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        elif args['sample'] == 'truncated_normal':
+            filepath = os.path.join('datasets', 'acopf_T', prob_type+'_dataset')
     else:
         raise NotImplementedError
 
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
-    data = ACOPFProblem2(dataset, train_num=300, valid_num=10, test_num=10) #, valid_frac=0.05, test_frac=0.05)
+    data = ACOPFProblem(dataset, train_num=1000, valid_num=50, test_num=50) #, valid_frac=0.05, test_frac=0.05)
     data._device = DEVICE
     print(DEVICE)
     for attr in dir(data):
@@ -126,7 +131,7 @@ def main():
     
     # Run method
     # train_net(data, args, save_dir)
-    with wandb.init(project='deepv_multi', config=args):
+    with wandb.init(project='deepv_multi', config=args, name=prob_type):
         config = wandb.config
         solver_net, stats = train_net(data, args, save_dir)
 
@@ -364,23 +369,14 @@ def train_net(data, args, save_dir):
     factor = 1
     args['factor'] = factor
     flag = True
+    warm_start = 1
+
+    wandb.watch(solver_net, log="all")
+    wandb.watch(classifier, log="all")
 
 
     for i in range(nepochs):
         epoch_stats = {}
-
-        # Get valid loss
-        solver_net.eval()
-        for Xvalid in valid_loader:
-            Xvalid = Xvalid[0].to(DEVICE)
-            eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
-
-        # Get test loss
-        solver_net.eval()
-        for Xtest in test_loader:
-            Xtest = Xtest[0].to(DEVICE)
-            eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
-
         # Get train loss
         
         solver_net.train()
@@ -394,9 +390,9 @@ def train_net(data, args, save_dir):
 
             Yhat_prob = solver_net(Xtrain)
             Yhat_partial_train = data.scale_partial(Yhat_prob)
-            Yhat_train, converged = data.complete_partial(Xtrain, Yhat_partial_train)
+            Yhat_train, converged = data.complete_partial2(Xtrain, Yhat_partial_train)
             buffer.add(Yhat_prob, converged)
-            if i <= 10: # warm start to collect enough samples for adversarial training
+            if i < warm_start: # warm start to collect enough samples for adversarial training
                 continue
             # train_loss = total_loss(data, Xtrain, Yhat_train, args)
 
@@ -422,24 +418,70 @@ def train_net(data, args, save_dir):
 
             ## update the solver_net, maximize log(D(G(z)))
             # solver_net.train()
-            # classifier.eval()
+            classifier.eval()
             true_label = torch.ones(converged.shape, device=DEVICE)
             output = classifier(Yhat_prob).view(-1)
             errSolver = criterion(output, true_label).view(-1) * 1e6
             # errSolver.backward()
             train_loss = total_loss(data, Xtrain, Yhat_train, args)
             train_loss = torch.cat((train_loss, errSolver))
-            train_loss.sum().backward()
+
+            if flag: # reinitialize weights after updating the factor
+                weights = torch.ones_like(train_loss)
+                weights = torch.nn.Parameter(weights)
+                T = weights.sum().detach()
+                optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
+                l0 = train_loss.detach()
+                flag = False
+            
+            weighted_loss = (weights * train_loss).sum()
+            weighted_loss.backward(retain_graph=True)
+
+            gw = []
+            for ii in range(len(train_loss)):
+                dl = torch.autograd.grad(weights[ii] * train_loss[ii], solver_net.parameters(), retain_graph=True, create_graph=True)[0]
+                gw.append(torch.norm(dl))
+            
+            gw = torch.stack(gw)
+            loss_ratio = train_loss.detach() / l0
+            rt = loss_ratio / loss_ratio.mean()
+            gw_avg = gw.mean().detach()
+            constant = (gw_avg * rt ** 0.01).detach()
+            gradnorm_loss = torch.abs(gw - constant).sum()
+            optimizer_gradnorm.zero_grad()
+            gradnorm_loss.backward()
+            optimizer_gradnorm.step()
+            solver_opt.step()
+            optimizer_gradnorm.step()
+
+            weights = (T * weights / weights.sum()).detach()
+            weights = torch.nn.Parameter(weights)
+            optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
+            iters += 1
+
+            # train_loss.sum().backward()
             solver_opt.step()
             
-
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.sum().unsqueeze(0).detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
             dict_agg(epoch_stats, 'train_nonconverged', torch.sum(converged == 0).unsqueeze(0).detach().cpu().numpy())
 
-        if i <= 10:
+        if i < warm_start:
             continue
+
+        # Get valid loss
+        solver_net.eval()
+        for Xvalid in valid_loader:
+            Xvalid = Xvalid[0].to(DEVICE)
+            eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
+
+        # Get test loss
+        solver_net.eval()
+        for Xtest in test_loader:
+            Xtest = Xtest[0].to(DEVICE)
+            eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
+
         print(
             'Epoch {}: train loss {:.4f}, eval {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, time {:.4f}'.format(
                 i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
@@ -453,16 +495,16 @@ def train_net(data, args, save_dir):
                    'eq_max': np.mean(epoch_stats['valid_eq_max']), 'nonconverged': np.mean(epoch_stats['train_nonconverged']),
                    'time': np.mean(epoch_stats['valid_time'])}, step=i)
 
-        # if args['saveAllStats']:
-        #     # if i == 0:
-        #     if i == 5:
-        #         for key in epoch_stats.keys():
-        #             stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
-        #     else:
-        #         for key in epoch_stats.keys():
-        #             stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
-        # else:
-        #     stats = epoch_stats
+        if args['saveAllStats']:
+            # if i == 0:
+            if i == warm_start:
+                for key in epoch_stats.keys():
+                    stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
+            else:
+                for key in epoch_stats.keys():
+                    stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
+        else:
+            stats = epoch_stats
 
         if (i % args['resultsSaveFreq'] == 0):
             with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
@@ -478,6 +520,11 @@ def train_net(data, args, save_dir):
         pickle.dump(stats, f)
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
+    
+
+    print("wandb log dir: ", wandb.run.dir)
+    wandb.finish()
+
     return solver_net, stats
 
 def log_barrier_vectorized(z, t):
@@ -487,7 +534,7 @@ def log_barrier_vectorized(z, t):
 def total_loss(data, X, Y, args):
     t = args['factor']
     # eq_cost = torch.norm(data.eq_resid(X, Y), dim=1).mean(dim=0)
-    obj_cost = data.obj_fn(Y).mean(dim=0) / 1000
+    obj_cost = data.obj_fn(Y).mean(dim=0)
 
     ineq_resid = data.ineq_resid(X, Y)
     ineq_resid_bar = torch.zeros_like(ineq_resid)
@@ -572,7 +619,7 @@ def eval_net(data, X, solver_net, args, prefix, stats):
     start_time = time.time()
     Y_prob = solver_net(X)
     Y_partial = data.scale_partial(Y_prob)
-    Y, converged = data.complete_partial(X, Y_partial)
+    Y, converged = data.complete_partial2(X, Y_partial)
     end_time = time.time()
 
     dict_agg(stats, make_prefix('time'), end_time - start_time, op='sum')
