@@ -21,7 +21,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='acopf39'
+    parser.add_argument('--probType', type=str, default='acopf57'
                         , help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -74,6 +74,9 @@ def main():
     parser.add_argument('--resultsSaveFreq', type=int,
         help='how frequently (in terms of number of epochs) to save stats to file')
 
+    parser.add_argument('--sample', type=str, default='truncated_normal', #truncated_normal
+        help='how to sample data for acopf problems')
+
     args = parser.parse_args()
     args = vars(args) # change to dictionary
     defaults = default_args.method_default_args(args['probType'])
@@ -93,13 +96,18 @@ def main():
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif 'acopf' in prob_type:
-        filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        if args['sample'] == 'uniform':
+            filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        elif args['sample'] == 'truncated_normal':
+            filepath = os.path.join('datasets', 'acopf_T', prob_type+'_dataset')
+        else:
+            raise NotImplementedError
     else:
         raise NotImplementedError
 
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
-    data = ACOPFProblem(dataset, train_num=800, valid_num=100, test_num=100) #, valid_frac=0.05, test_frac=0.05)
+    data = ACOPFProblem(dataset, train_num=1000, valid_num=50, test_num=50) #, valid_frac=0.05, test_frac=0.05)
     data._device = DEVICE
     print(DEVICE)
     for attr in dir(data):
@@ -207,13 +215,6 @@ def train_net(data, args, save_dir):
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
-
-        # print(
-        #     'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}'.format(
-        #         i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
-        #         np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
-        #         np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
-        #         np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time'])))
 
         print(
             'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, time {:.4f}'.format(
@@ -323,21 +324,13 @@ def eval_net(data, X, solver_net, args, prefix, stats):
              torch.sum(torch.abs(data.eq_resid(X, Ynew)) > 100 * eps_converge, dim=1).detach().cpu().numpy())
     return stats
 
-# def total_loss(data, X, Y, args):
-#     obj_cost = data.obj_fn(Y)
-#     ineq_dist = data.ineq_dist(X, Y)
-#     ineq_cost = torch.norm(ineq_dist, dim=1)
-#     eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
-#     return obj_cost + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost + \
-#             args['softWeight'] * args['softWeightEqFrac'] * eq_cost
-
 def log_barrier_vectorized(z, t):
     t_tensor = torch.ones(z.shape, device=DEVICE) * t
     return torch.where(z <= -1 / t**2, -torch.log(-z) / t, t * z - torch.log(1 / (t_tensor**2)) / t + 1 / t)
 
 def total_loss(data, X, Y, args):
     t = args['factor']
-    obj_cost = data.obj_fn(Y).mean(dim=0) * 100
+    obj_cost = torch.clamp(data.obj_fn(Y).mean(dim=0)-3.86, 0) * 100
     ineq_resid = data.ineq_resid(X, Y)
     ineq_resid_bar = torch.zeros_like(ineq_resid)
     for i in range(ineq_resid.shape[0]):
