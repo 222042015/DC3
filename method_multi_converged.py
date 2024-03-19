@@ -143,8 +143,8 @@ def main():
 
 def train_net(data, args, save_dir):
     solver_step = args['lr']
-    nepochs = 1000 #args['epochs']
-    batch_size = 200
+    nepochs = 3000 #args['epochs']
+    batch_size = 50
     
 
     train_dataset = TensorDataset(data.trainX)
@@ -156,14 +156,15 @@ def train_net(data, args, save_dir):
     test_loader = DataLoader(test_dataset, batch_size=len(test_dataset))
 
     solver_net = NNSolver(data, args)
-    solver_net.to(DEVICE)
+    solver_net.to(DEVICE) 
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
     # scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=20, gamma=0.95)
     # solver_step = 1e-8
     # scheduler = optim.lr_scheduler.CosineAnnealingLR(solver_opt, T_max=100, eta_min=5e-6)
 
-    solver_step = 0.0003
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(solver_opt, T_max=100, eta_min=0.00003)
+    solver_step = 0.0001
+    # scheduler = optim.lr_scheduler.CosineAnnealingLR(solver_opt, T_max=200, eta_min=0.00001)
+    scheduler = optim.lr_scheduler.ExponentialLR(solver_opt, gamma=0.95)
 
     # load the weights from pure NN network
     # try:
@@ -196,7 +197,7 @@ def train_net(data, args, save_dir):
     # base_solver.eval()
 
     stats = {}
-    factor = 1
+    factor = 10.0
     flag = True
     iters = 0
     args['factor'] = factor * torch.ones(data.nineq, device=DEVICE, requires_grad=False)
@@ -235,14 +236,20 @@ def train_net(data, args, save_dir):
             solver_opt.zero_grad()
             train_loss.sum().backward()
             solver_opt.step()
-            scheduler.step()
+            # scheduler.step()
             train_time = time.time() - start_time
-            update_t(data, Xtrain, Yhat_train, args)
+            if i > 50 and i % 10 == 0:
+                update_t(data, Xtrain, Yhat_train, args)
             dict_agg(epoch_stats, 'train_loss', train_loss.sum().unsqueeze(0).detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
             dict_agg(epoch_stats, 'train_nonconverged', torch.sum(converged == 0).unsqueeze(0).detach().cpu().numpy())
 
-        # scheduler.step()
+        if (i+1) % 100 == 0:
+            print('maximum t: ', args['factor'].max().item())
+            print('minimum t: ', args['factor'].min().item())
+        
+        if (i+1) % 50 == 0:
+            scheduler.step()
         # Get valid loss
         solver_net.eval()
         for Xvalid in valid_loader:
@@ -302,38 +309,6 @@ def train_net(data, args, save_dir):
             torch.save(solver_net.state_dict(), os.path.join(save_dir, 'solver_net_1000.pth'))
             # torch.save(solver_net.state_dict(), os.path.join(wandb.run.dir, 'solver_net_1000.pth'))
         
-        # if i % 10 == 0 and i != 0:
-        #     # soft update the parameters of solver_net_copy
-        #     tau = 0.15  # The soft update blending factor
-
-        #     # Perform a soft update
-        #     for target_param, param in zip(solver_net_copy.parameters(), solver_net.parameters()):
-        #         target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
-            
-        # if i == 0:
-        #     obj_hist = [np.mean(epoch_stats['train_loss_obj']).item()]
-        #     ineq_hist = [np.mean(epoch_stats['train_loss_obj']).item()]
-        # elif i % 9 != 0:
-        #     # obj_hist = train_loss[0].detach().cpu().numpy().item()
-        #     # ineq_hist = train_loss[1].detach().cpu().numpy().item()
-        #     obj_hist.append(np.mean(epoch_stats['train_loss_obj']).item())
-        #     ineq_hist.append(np.mean(epoch_stats['train_loss_ineq']).item())
-        # else:
-        #     adapt_weight = softadapt_object.get_component_weights(torch.tensor(obj_hist), 
-        #                                                          torch.tensor(ineq_hist), verbose=False)
-        #     adapt_weight = adapt_weight.to(DEVICE) * 2
-        #     obj_hist = [np.mean(epoch_stats['train_loss_obj']).item()]
-        #     ineq_hist = [np.mean(epoch_stats['train_loss_obj']).item()]
-        
-        # if i % 100 == 0:
-        #     args['factor'] = 1e3
-        #     factor = factor * 5
-        # if i % 20 == 0:
-        #     args['factor'] = args['factor'] * 1.2
-        
-
-        
-
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
         pickle.dump(stats, f)
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
@@ -349,22 +324,6 @@ def log_barrier_vectorized(z, t):
     t_tensor = t
     return torch.where(z <= -1 / t**2, -torch.log(-z) / t, t * z - torch.log(1 / (t_tensor**2)) / t + 1 / t)
 
-# def total_loss(data, X, Y, args):
-#     t = args['factor']
-#     obj_cost = data.obj_fn(Y).unsqueeze(0)
-#     # ineq_resid = data.ineq_resid(X, Y)
-#     ineq_resid = data.ineq_dist(X, Y)
-#     ineq_resid_bar = torch.zeros_like(ineq_resid)
-#     for i in range(ineq_resid.shape[0]):
-#         ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], t)
-#     ineq_resid_bar = ineq_resid_bar.sum(dim=1).sum(dim=0)
-#     # ineq_resid_bar = ineq_resid_bar.mean(dim=0)
-
-#     return ineq_resid_bar.unsqueeze(0) + obj_cost.unsqueeze(0)
-
-
-
-
 def total_loss(data, X, Y, args):
     t = args['factor']
     obj_cost = data.obj_fn(Y).mean(dim=0) 
@@ -378,7 +337,7 @@ def total_loss(data, X, Y, args):
 
     loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0)))
 
-    return loss
+    return loss[0]
 
 def update_t(data, X, Y, args):
     t = args['factor']
@@ -386,40 +345,45 @@ def update_t(data, X, Y, args):
     ineq_resid_mean = ineq_resid.mean(dim=0)
     # multiply t by 1.05 if the component of ineq_resid_mean is greater than 0.1
     for i in range(ineq_resid_mean.shape[0]):
-        if ineq_resid_mean[i] > 0.0001:
-            t[i] = t[i] * 1.005
+        if ineq_resid_mean[i] > 0.001:
+            t[i] = min(1e4, t[i] * 1.01)
     args['factor'] = t
-
-# def total_loss(data, X, Y, args, base_solver):
-#     Y_base = base_solver(X)
-#     obj_base = data.obj_fn(Y_base).unsqueeze(0)
-#     obj = data.obj_fn(Y).unsqueeze(0)
-#     obj_cost = torch.norm(obj - obj_base, dim=1).mean(dim=0)
-#     # obj_cost = data.obj_fn(Y).unsqueeze(0)
-#     ineq_dist = data.ineq_dist(X, Y)
-#     ineq_cost = torch.norm(ineq_dist, dim=1).mean(dim=0)
-#     return torch.cat((obj_cost.unsqueeze(0), ineq_cost.unsqueeze(0)))
-#     return obj_cost + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost + \
-#             args['softWeight'] * args['softWeightEqFrac'] * eq_cost
-
-# def total_loss(data, X, Y, args):
-#     t = args['factor']
-#     obj_cost = data.obj_fn(Y).mean(dim=0) 
-
-#     ineq_resid = data.ineq_dist(X, Y)
-#     ineq_resid_bar = torch.zeros_like(ineq_resid)
-#     for i in range(ineq_resid.shape[0]):
-#         ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], t)
-#     ineq_resid_bar = ineq_resid_bar.sum(dim=1).sum(dim=0)
-#     # ineq_resid_bar = ineq_resid_bar.mean(dim=0)
-
-#     loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0)))
-
-#     return loss
-
 
 
 ######### Models
+# class NNSolver(nn.Module):
+#     def __init__(self, data, args):
+#         super().__init__()
+#         self._data = data
+#         self._args = args
+#         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
+
+#         output_dim = data.ydim - data.nknowns - data.neq
+
+#         dic = []
+#         for i in range(len(layer_sizes)-1):
+#             dic.append((f'linear{i}', nn.Linear(layer_sizes[i], layer_sizes[i+1])))
+#             dic.append((f'batchnorm{i}', nn.BatchNorm1d(layer_sizes[i+1])))
+#             dic.append((f'activation{i}', nn.ELU()))
+#             dic.append((f'dropout{i}', nn.Dropout(p=0.1)))
+
+#         dic.append((f'linear_output', nn.Linear(layer_sizes[-1], output_dim)))
+#         self.net = nn.Sequential(OrderedDict(dic))
+
+#         for name, param in self.net.named_parameters():
+#             if "linear" in name and "weight" in name:
+#                 nn.init.kaiming_normal_(param)
+
+#     def forward(self, x):
+#         prob_type = self._args['probType']
+#         if prob_type == 'simple':
+#             return self.net(x)
+#         elif prob_type == 'nonconvex':
+#             return self.net(x)
+#         elif 'acopf' in prob_type:
+#             out = self.net(x)
+#             return nn.Sigmoid()(out)
+
 class NNSolver(nn.Module):
     def __init__(self, data, args):
         super().__init__()
@@ -430,16 +394,37 @@ class NNSolver(nn.Module):
         output_dim = data.ydim - data.nknowns - data.neq
 
         dic = []
+
         for i in range(len(layer_sizes)-1):
             dic.append((f'linear{i}', nn.Linear(layer_sizes[i], layer_sizes[i+1])))
             dic.append((f'batchnorm{i}', nn.BatchNorm1d(layer_sizes[i+1])))
             dic.append((f'activation{i}', nn.ELU()))
-            dic.append((f'dropout{i}', nn.Dropout(p=0.1)))
-
-        dic.append((f'linear_output', nn.Linear(layer_sizes[-1], output_dim)))
+        
         self.net = nn.Sequential(OrderedDict(dic))
 
+        dic_pg = []
+        dic_pg.append((f'linear_pg', nn.Linear(layer_sizes[-1], 100)))
+        dic_pg.append((f'activation_pg', nn.ELU()))
+        dic_pg.append((f'linear_pg_output', nn.Linear(100, len(data.pg_pv_zidx))))
+
+        self.net_pg = nn.Sequential(OrderedDict(dic_pg))
+    
+        dic_spv = []
+        dic_spv.append((f'linear_pv', nn.Linear(layer_sizes[-1], 100)))
+        dic_spv.append((f'activation_pv', nn.ELU()))
+        dic_spv.append((f'linear_pv_output', nn.Linear(100, len(data.vm_spv_zidx))))
+        
+        self.net_spv = nn.Sequential(OrderedDict(dic_spv))
+
         for name, param in self.net.named_parameters():
+            if "linear" in name and "weight" in name:
+                nn.init.kaiming_normal_(param)
+        
+        for name, param in self.net_pg.named_parameters():
+            if "linear" in name and "weight" in name:
+                nn.init.kaiming_normal_(param)
+
+        for name, param in self.net_spv.named_parameters():
             if "linear" in name and "weight" in name:
                 nn.init.kaiming_normal_(param)
 
@@ -451,8 +436,12 @@ class NNSolver(nn.Module):
             return self.net(x)
         elif 'acopf' in prob_type:
             out = self.net(x)
-            return nn.Sigmoid()(out)
-
+            pg = self.net_pg(out)
+            spv = self.net_spv(out)
+            output =  torch.cat((pg, spv), dim=1)
+            output = nn.Sigmoid()(output)   # used to interpolate between max and min values
+            return output
+        
 # Modifies stats in place
 def dict_agg(stats, key, value, op='concat'):
     if key in stats.keys():
