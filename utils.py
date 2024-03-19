@@ -308,7 +308,7 @@ class ACOPFProblem:
         resids = torch.cat([
             pg - self.pmax,
             self.pmin - pg,
-            qg - self.qmax,
+            qg- self.qmax,
             self.qmin - qg,
             vm - self.vmax,
             self.vmin - vm
@@ -449,9 +449,19 @@ class ACOPFProblem:
 
     def complete_partial2(self, X, Z):
         return PFFunction(self)(X, Z)
+    
+    def scale_partial(self, Z):
+        Y_partial = torch.zeros(Z.shape, device=self.device)
 
+        Y_partial[:, self.pg_pv_zidx] = Z[:, self.pg_pv_zidx] * (self.pmax[self.pv_] - self.pmin[self.pv_]) + self.pmin[
+            self.pv_]
+        # Re-scale voltage magnitudes
+        Y_partial[:, self.vm_spv_zidx] = Z[:, self.vm_spv_zidx] * (self.vmax[self.spv] - self.vmin[self.spv]) + \
+                                        self.vmin[self.spv]
+        
+        return Y_partial
 
-    def opt_solve(self, X, solver_type='pypower', tol=1e-6):
+    def opt_solve(self, X, solver_type='pypower', tol=1e-3):
         X_np = X.detach().cpu().numpy()
         ppc = self.ppc
 
@@ -464,6 +474,7 @@ class ACOPFProblem:
 
         Y = []
         total_time = 0
+        success = 0
         for i in range(X_np.shape[0]):
             print(i)
             ppc['bus'][:, idx_bus.PD] = X_np[i, :self.nbus] * self.baseMVA
@@ -472,6 +483,11 @@ class ACOPFProblem:
             start_time = time.time()
             my_result = opf(ppc, ppopt)
             print(my_result["success"])
+            if my_result["success"]:
+                success += 1
+            else:
+                ppopt1 = ppoption.ppoption(OPF_ALG=560, VERBOSE=3, OPF_VIOLATION=tol)
+                my_result = opf(ppc, ppopt1)
             # printpf(my_result)
             end_time = time.time()
             total_time += (end_time - start_time)
@@ -481,6 +497,8 @@ class ACOPFProblem:
             vm = my_result['bus'][:, idx_bus.VM]
             va = np.deg2rad(my_result['bus'][:, idx_bus.VA])
             Y.append(np.concatenate([pg, qg, vm, va]))
+        
+        print("Success rate: ", success/X_np.shape[0])
 
         return np.array(Y), total_time, total_time/len(X_np)
 
@@ -591,8 +609,17 @@ def PFFunction(data, tol=1e-5, bsz=200, max_iters=20):
 
             # Use precomputed inverse jacobian
             jac2 = jac[:, keep_constr, :]
-            d_int = torch.linalg.solve(jac_pre_inv.transpose(1, 2), # K
+            # d_int = torch.linalg.solve(jac_pre_inv.transpose(1, 2), # K
+            #                            dl_dy_total[:, newton_guess_inds].unsqueeze(-1)).squeeze(-1)
+            try:
+                d_int = torch.linalg.solve(jac_pre_inv.transpose(1, 2), # K
                                        dl_dy_total[:, newton_guess_inds].unsqueeze(-1)).squeeze(-1)
+            except:
+                # if the prediction does not provide a invertible jacobian, take one step and then break
+                # add perturbation to the diagonal of jac
+                perturb = torch.eye(jac_pre_inv.size(1)).unsqueeze(0).repeat(jac_pre_inv.size(0), 1, 1).to(DEVICE)
+                eps = 1e-10
+                d_int = torch.linalg.solve(jac_pre_inv + eps*perturb, dl_dy_total[:, newton_guess_inds].unsqueeze(-1)).squeeze(-1)
 
             dl_dz_2 = torch.zeros(dl_dy.shape[0], data.npv + data.ng, device=jac.device)
             dl_dz_2[:, data.pg_pv_zidx] = -d_int[:, :data.npv]  # dl_dpg at pv buses
