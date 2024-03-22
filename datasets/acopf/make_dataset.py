@@ -9,8 +9,8 @@ sys.path.insert(1, os.path.join(sys.path[0], os.pardir, os.pardir))
 nbus = 300
 num = 1200
 
-data = scipy.io.loadmat('./datasets/acopf/matlab_datasets/data/ACOPF_01_variation/FeasiblePairs_case{}.mat'.format(nbus))
-ppc_mat = scipy.io.loadmat('./datasets/acopf/matlab_datasets/data/ACOPF_01_variation/case{}.mat'.format(nbus))
+data = scipy.io.loadmat('./matlab_datasets/data/ACOPF_01_variation/FeasiblePairs_case{}.mat'.format(nbus))
+ppc_mat = scipy.io.loadmat('./matlab_datasets/data/ACOPF_01_variation/case{}.mat'.format(nbus))
 ppc =   {'version': int(ppc_mat['my_model']['version'][0,0]), \
         'baseMVA': float(ppc_mat['my_model']['baseMVA'][0,0]), \
         'bus':ppc_mat['my_model']['bus'][0,0], \
@@ -26,9 +26,10 @@ data['Dem'] = data['Dem'].T[sample_index, :]
 data['Gen'] = data['Gen'].T[sample_index, :]
 data['Vol'] = data['Vol'].T[sample_index, :]
 data['Ybus'] = data['Ybus']
+data['sample'] = 'uniform'
 
 # with open("./datasets/acopf/acopf_2023_{}_{}_dataset".format(nbus, num), 'wb') as f:
 #     pickle.dump(data, f)
 
-with open("./datasets/acopf/acopf{}_dataset".format(nbus), 'wb') as f:
+with open("./acopf{}_dataset".format(nbus), 'wb') as f:
     pickle.dump(data, f)

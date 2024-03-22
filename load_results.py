@@ -29,8 +29,10 @@ def get_experiment_dirs(path_prefix):
     # exper_dirs['nonconvex'] = 'NonconvexProblem-100-50-50-10000'
 
     # exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
-    exper_dirs['acopf'] = 'ACOPF-300-0-0.5-0.1-1000-100-100'
-
+    # exper_dirs['acopf'] = 'ACOPF-1354-0-0.5-0.1-800-100-100'
+    # exper_dirs['acopf'] = 'ACOPF-118-0-0.5-0.1-1000-50-50'
+    exper_dirs['acopf'] = 'ACOPF-57-truncated_normal-0-0.5-0.7-1000-50-50'
+    # exper_dirs['acopf'] = 'ACOPF-39-uniform-0-0.5-0.1-1000-50-50'
     for key in exper_dirs.keys():
         exper_dirs[key] = os.path.join(path_prefix, exper_dirs[key])
 
@@ -47,7 +49,7 @@ def get_status_results(exper_dirs):
     ])
     # nn_baseline_dirs = [('baseline_nn', 'baselineNN'), ('baseline_eq_nn', 'baselineEqNN')]
 
-    nn_baseline_dirs = []
+    nn_baseline_dirs = [('baseline_nn', 'baselineNN')]
     for exper, exper_dir in exper_dirs.items():
         print(exper)
         
@@ -65,7 +67,11 @@ def get_status_results(exper_dirs):
             # baselines
             all_methods_dirs = nn_baseline_dirs + \
                 [('baseline_opt_{}'.format(x), 'baselineOpt-{}'.format(x)) for x in \
-                    opt_methods[exper.split('_')[0]]]
+                    opt_methods[exper.split('_')[0]]] + \
+                [('method_deeplde', 'method_deeplde')] + \
+                [('method_multi', 'method_multi')] + \
+                [('method_deepv_multi', 'method_deepv_multi')] 
+                # [('method_nocorr', 'method_nocorr')]
             for (method, dirname) in all_methods_dirs:
                 path = os.path.join(exper_dir, dirname)
                 if os.path.exists(path):
@@ -103,6 +109,7 @@ def get_dc3_path_mapping(method_path):
                 chosen_method = 'method_no_soft'
             else:
                 chosen_method = 'method' 
+            # chosen_method = 'method'
 
             dir_method_map[chosen_method] = os.path.join(method_path, args_dir)
     return dir_method_map
@@ -158,7 +165,7 @@ def check_running_done(path, is_opt=False):
             if os.path.exists(os.path.join(path, 'stats.dict')):
                 with open(os.path.join(path, 'stats.dict'), 'rb') as f:
                     stats = pickle.load(f)
-                is_done = (len(stats['valid_time']) == 1000)
+                is_done = (len(stats['valid_time']) >= 100)
                 if not is_done:
                     print(len(stats['valid_time']))
         except Exception as e:

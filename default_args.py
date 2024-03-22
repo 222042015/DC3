@@ -55,12 +55,24 @@ def baseline_nn_default_args(prob_type):
         defaults['corrEps'] = 1e-4
         defaults['corrLr'] = 1e-7
         defaults['corrMomentum'] = 0.5
-    elif 'acopf' in prob_type:
+    elif prob_type in ['acopf39', 'acopf57', 'acopf118']:
         defaults['epochs'] = 1000
-        defaults['batchSize'] = 200
+        defaults['batchSize'] = 100
         defaults['lr'] = 1e-3
         defaults['hiddenSize'] = 200
         defaults['softWeight'] = 100
+        defaults['softWeightEqFrac'] = 0.5
+        defaults['useTestCorr'] = False
+        defaults['corrTestMaxSteps'] = 5
+        defaults['corrEps'] = 1e-4
+        defaults['corrLr'] = 1e-5
+        defaults['corrMomentum'] = 0.5
+    elif prob_type == 'acopf300':
+        defaults['epochs'] = 1000
+        defaults['batchSize'] = 100
+        defaults['lr'] = 1e-3
+        defaults['hiddenSize'] = 200
+        defaults['softWeight'] = 1000
         defaults['softWeightEqFrac'] = 0.5
         defaults['useTestCorr'] = True
         defaults['corrTestMaxSteps'] = 5
@@ -115,7 +127,7 @@ def baseline_eq_nn_default_args(prob_type):
         defaults['lr'] = 1e-3
         defaults['hiddenSize'] = 200
         defaults['softWeightEqFrac'] = 0.5
-        defaults['useTestCorr'] = True
+        defaults['useTestCorr'] = False
         defaults['corrMode'] = 'full'
         defaults['corrTestMaxSteps'] = 5
         defaults['corrEps'] = 1e-4
@@ -171,12 +183,12 @@ def method_default_args(prob_type):
         defaults['corrEps'] = 1e-4
         defaults['corrLr'] = 1e-7
         defaults['corrMomentum'] = 0.5
-    elif prob_type == 'acopf57':
+    elif prob_type in ['acopf57', 'acopf39']:
         defaults['epochs'] = 1000
         defaults['batchSize'] = 200
-        defaults['lr'] = 1e-3
+        defaults['lr'] = 5e-4   # dc3: 1e-3
         defaults['hiddenSize'] = 200
-        defaults['softWeight'] = 10             # use 100 if useCompl=False
+        defaults['softWeight'] = 10        # use 100 if useCompl=False
         defaults['softWeightEqFrac'] = 0.5
         defaults['useCompl'] = True
         defaults['useTrainCorr'] = True
@@ -190,13 +202,13 @@ def method_default_args(prob_type):
     elif prob_type == 'acopf118':
         defaults['epochs'] = 1000
         defaults['batchSize'] = 200
-        defaults['lr'] = 1e-4
+        defaults['lr'] = 1e-3
         defaults['hiddenSize'] = 200
         defaults['softWeight'] = 10             # use 100 if useCompl=False
         defaults['softWeightEqFrac'] = 0.5
         defaults['useCompl'] = True
-        defaults['useTrainCorr'] = True
-        defaults['useTestCorr'] = True
+        defaults['useTrainCorr'] = True # True
+        defaults['useTestCorr'] = True # True
         defaults['corrMode'] = 'partial'    # use 'full' if useCompl=False
         defaults['corrTrainSteps'] = 5
         defaults['corrTestMaxSteps'] = 5
@@ -285,7 +297,7 @@ def deepv_default_args(prob_type):
         defaults['rho_max'] = 10000
         defaults['batchSize'] = 200
         defaults['epochs'] = 2000
-        defaults['lr'] = 1e-3
+        defaults['lr'] = 5e-4
         defaults['hiddenSize'] = 200
     else:
         raise NotImplementedError

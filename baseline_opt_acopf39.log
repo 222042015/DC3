@@ -1,0 +1,2 @@
+{'probType': 'acopf39', 'simpleVar': 100, 'simpleIneq': 50, 'simpleEq': 50, 'simpleEx': 10000, 'nonconvexVar': 100, 'nonconvexIneq': 50, 'nonconvexEq': 50, 'nonconvexEx': 10000, 'corrEps': 0.0001, 'sample': 'truncated_normal'}
+cuda

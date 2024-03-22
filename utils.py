@@ -314,6 +314,30 @@ class ACOPFProblem:
             self.vmin - vm
         ], dim=1)
         return resids
+    
+    def ineq_resid_pg(self, X, Y):
+        pg, qg, vm, va = self.get_yvars(Y)
+        resids = torch.cat([
+            pg - self.pmax,
+            self.pmin - pg,
+        ], dim=1)
+        return resids
+    
+    def ineq_resid_qg(self, X, Y):
+        pg, qg, vm, va = self.get_yvars(Y)
+        resids = torch.cat([
+            qg- self.qmax,
+            self.qmin - qg,
+        ], dim=1)
+        return resids
+
+    def ineq_resid_v(self, X, Y):
+        pg, qg, vm, va = self.get_yvars(Y)
+        resids = torch.cat([
+            vm - self.vmax,
+            self.vmin - vm
+        ], dim=1)
+        return resids
 
     def ineq_dist(self, X, Y):
         resids = self.ineq_resid(X, Y)

@@ -1,9 +1,10 @@
-try:
-    import waitGPU
-    waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
-except ImportError:
-    pass
+# try:
+#     import waitGPU
+#     waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
+# except ImportError:
+#     pass
 
+from collections import OrderedDict
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -20,8 +21,11 @@ from setproctitle import setproctitle
 import os
 import argparse
 
-from utils import my_hash, str_to_bool
+from utils import my_hash, str_to_bool, ACOPFProblem
 import default_args
+import matplotlib.pyplot as plt
+import json
+import wandb
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -71,6 +75,9 @@ def main():
         help='whether to save all stats, or just those from latest epoch')
     parser.add_argument('--resultsSaveFreq', type=int,
         help='how frequently (in terms of number of epochs) to save stats to file')
+    
+    parser.add_argument('--sample', type=str, default='truncated_normal',
+        help='how to sample data for acopf problems')
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
@@ -91,21 +98,26 @@ def main():
     elif prob_type == 'nonconvex':
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
-    elif prob_type == 'acopf57':
-        filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
+    elif 'acopf' in prob_type:
+        if args['sample'] == 'uniform':
+            filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        elif args['sample'] == 'truncated_normal':
+            filepath = os.path.join('datasets', 'acopf_T', prob_type+'_dataset')
     else:
         raise NotImplementedError
 
     with open(filepath, 'rb') as f:
-        data = pickle.load(f)
+        dataset = pickle.load(f)
+    data = ACOPFProblem(dataset, train_num=1000, valid_num=50, test_num=50) #, valid_frac=0.05, test_frac=0.05)
+    data._device = DEVICE
+    print(DEVICE)
     for attr in dir(data):
         var = getattr(data, attr)
-        if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+        if torch.is_tensor(var):
             try:
                 setattr(data, attr, var.to(DEVICE))
             except AttributeError:
                 pass
-    data._device = DEVICE
 
     save_dir = os.path.join('results', str(data), 'baselineNN',
         my_hash(str(sorted(list(args.items())))), str(time.time()).replace('.', '-'))
@@ -115,12 +127,13 @@ def main():
         pickle.dump(args, f)
 
     # Run pure neural network baseline
-    solver_net, stats = train_net(data, args, save_dir)
+    with wandb.init(project=prob_type+'_'+args['sample'], config=args, name="baseline_nn"):
+        solver_net, stats = train_net(data, args, save_dir)
 
 
 def train_net(data, args, save_dir):
     solver_step = args['lr']
-    nepochs = args['epochs']
+    nepochs = 1000 #args['epochs']
     batch_size = args['batchSize']
 
     train_dataset = TensorDataset(data.trainX)
@@ -134,7 +147,9 @@ def train_net(data, args, save_dir):
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
-
+    
+    conv_hist = []
+    eq_resid_hist = []
     stats = {}
     for i in range(nepochs):
         epoch_stats = {}
@@ -165,14 +180,30 @@ def train_net(data, args, save_dir):
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
 
+        if i % 20 == 0:
+            Yhat_partial = Yhat_train[:, data._partial_unknown_vars]
+            _, conv = data.complete_partial2(Xtrain, Yhat_partial)
+            conv_hist.append(conv.detach().cpu().numpy().sum())
 
-        # Print results
+            eq_resid = torch.max(torch.abs(data.eq_resid(Xtrain, Yhat_train)), dim=1)[0].detach().cpu().numpy()
+            eq_resid_hist.append(eq_resid.mean())
+
+            wandb.log({"convergence": conv_hist[-1], "eq_resid": eq_resid_hist[-1]}, step=(i+1))
+
         print(
             'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}'.format(
                 i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
                 np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
                 np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time'])))
+        wandb.log({'train_loss': np.mean(epoch_stats['train_loss']), 
+                   'valid_eval': np.mean(epoch_stats['valid_eval']), 
+                   'valid_ineq_max': np.mean(epoch_stats['valid_ineq_max']), 
+                   'valid_ineq_mean': np.mean(epoch_stats['valid_ineq_mean']), 
+                   'valid_eq_max': np.mean(epoch_stats['valid_eq_max']), 
+                   'valid_time': np.mean(epoch_stats['valid_time']),
+                   'train_time': np.mean(epoch_stats['train_time']),
+                   'valid_ineq_num_viol': np.mean(epoch_stats['valid_ineq_num_viol_0'])})
 
         if args['saveAllStats']:
             if i == 0:
@@ -194,7 +225,34 @@ def train_net(data, args, save_dir):
         pickle.dump(stats, f)
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
+    
+    plt.figure()
+    plt.plot([(i+1) * 50 for i in range(len(conv_hist))], conv_hist)
+    plt.xlabel('Epoch')
+    plt.ylabel('Convergence')
+    plt.savefig(os.path.join(save_dir, 'convergence.png'))
+    plt.savefig(os.path.join(save_dir, 'convergence.eps'), format='eps')
 
+    plt.figure()
+    plt.plot([(i+1) * 50 for i in range(len(eq_resid_hist))], eq_resid_hist)
+    plt.xlabel('Epoch')
+    plt.ylabel('Equality Residual')
+    plt.savefig(os.path.join(save_dir, 'eq_resid.png'))
+    plt.savefig(os.path.join(save_dir, 'eq_resid.eps'), format='eps')
+
+    # save the list conv_hist and eq_resid_hist
+    with open("convergence.json", 'w') as file:
+        json.dump(conv_hist, file)
+
+    with open("eq_resid.json", 'w') as file:
+        json.dump(eq_resid_hist, file)
+
+    # save the model
+    torch.save(solver_net.state_dict(), os.path.join(save_dir, 'model_weights.pth'))
+    torch.save(solver_net.state_dict(), os.path.join(wandb.run.dir, 'model_weights.pth'))
+    torch.save(solver_net, os.path.join(save_dir, 'solver_net.pt'))
+
+    wandb.finish()
     return solver_net, stats
 
 # Modifies stats in place
@@ -218,7 +276,9 @@ def eval_net(data, X, solver_net, args, prefix, stats):
     Y = solver_net(X)
     raw_end_time = time.time()
 
-    Ycorr, steps = grad_steps_all(data, X, Y, args)
+    # Ycorr, steps = grad_steps_all(data, X, Y, args)
+    Ycorr = Y
+    steps = 0
 
     dict_agg(stats, make_prefix('time'), time.time() - start_time, op='sum')
     dict_agg(stats, make_prefix('steps'), np.array([steps]))
@@ -272,33 +332,6 @@ def softloss(data, X, Y, args):
     return obj_cost + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost + \
            args['softWeight'] * args['softWeightEqFrac'] * eq_cost
 
-# Used only at test time, so let PyTorch avoid building the computational graph
-def grad_steps_all(data, X, Y, args):
-    take_grad_steps = args['useTestCorr']
-    if take_grad_steps:
-        lr = args['corrLr']
-        eps_converge = args['corrEps']
-        max_steps = args['corrTestMaxSteps']
-        momentum = args['corrMomentum']
-
-        Y_new = Y
-        i = 0
-        old_step = 0
-        with torch.no_grad():
-            while (i == 0 or torch.max(torch.abs(data.eq_resid(X, Y_new))) > eps_converge or
-                           torch.max(data.ineq_dist(X, Y_new)) > eps_converge) and i < max_steps:
-                with torch.no_grad():
-                    ineq_step = data.ineq_grad(X, Y_new)
-                    eq_step = data.eq_grad(X, Y_new)
-                    Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
-                    new_step = lr * Y_step + momentum * old_step
-                    Y_new = Y_new - new_step
-                    old_step = new_step
-                    i += 1
-        return Y_new, i
-    else:
-        return Y, 0
-
 
 ######### Models
 
@@ -308,15 +341,22 @@ class NNSolver(nn.Module):
         self._data = data
         self._args = args
         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
-        layers = reduce(operator.add, 
-            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)] 
-                for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-        layers += [nn.Linear(layer_sizes[-1], data.ydim)]
-        for layer in layers:
-            if type(layer) == nn.Linear:
-                nn.init.kaiming_normal_(layer.weight)
 
-        self.net = nn.Sequential(*layers)
+        dic = []
+        for i in range(len(layer_sizes)-1):
+            dic.append((f'linear{i}', nn.Linear(layer_sizes[i], layer_sizes[i+1])))
+            dic.append((f'batchnorm{i}', nn.BatchNorm1d(layer_sizes[i+1])))
+            dic.append((f'activation{i}', nn.ReLU()))
+            dic.append((f'dropout{i}', nn.Dropout(p=0.2)))
+
+        dic.append((f'linear_output', nn.Linear(layer_sizes[-1], data.ydim)))
+        # dic.append((f'activation{len(self.num_hidden_list)}', nn.Softplus()))
+        self.net = nn.Sequential(OrderedDict(dic))
+
+        for name, param in self.net.named_parameters():
+            if "weight" in name and "linear" in name:
+                nn.init.kaiming_normal_(param)
+
         
     def forward(self, x):
         prob_type = self._args['probType']
@@ -334,6 +374,7 @@ class NNSolver(nn.Module):
             return torch.cat([pg, qg, vm, out[:, -data.nbus:]], dim=1)
         else:
             raise NotImplementedError
+
 
 
 if __name__=='__main__':

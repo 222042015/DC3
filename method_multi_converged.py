@@ -138,7 +138,7 @@ def main():
 
 def train_net(data, args, save_dir):
     solver_step = 5e-4
-    nepochs = 2000 #args['epochs']
+    nepochs = 1000 #args['epochs']
     batch_size = 100
     
 
@@ -196,6 +196,7 @@ def train_net(data, args, save_dir):
                 np.mean(epoch_stats['valid_pg_dist']), np.mean(epoch_stats['valid_qg_dist']), np.mean(epoch_stats['valid_v_dist'])))
 
     torch.save(solver_net.base.state_dict(), os.path.join(save_dir, 'model_weights_base.pth'))
+    torch.save(solver_net.head_q.state_dict(), os.path.join(save_dir, 'model_weights_head_q.pth'))
     with open(os.path.join(save_dir, 'solver_net_base.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
 

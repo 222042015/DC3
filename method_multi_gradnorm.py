@@ -131,9 +131,9 @@ def main():
 
 def train_net(data, args, save_dir):
     solver_step = args['lr']
-    nepochs = args['epochs']
+    nepochs = 5000#args['epochs']
     batch_size = 100
-    solver_step = 0.0005
+    solver_step = 1e-3
 
     train_dataset = TensorDataset(data.trainX)
     valid_dataset = TensorDataset(data.validX)
@@ -146,6 +146,7 @@ def train_net(data, args, save_dir):
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
+    scheduler = optim.lr_scheduler.ExponentialLR(solver_opt, 0.9)
 
     stats = {}
     iters = 0
@@ -180,48 +181,40 @@ def train_net(data, args, save_dir):
 
             if flag:
                 weights = torch.ones_like(train_loss)
-                weights = torch.nn.Parameter(weights)
-                T = weights.sum().detach()
-                optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
-                l0 = train_loss.detach()
                 flag = False
             
             weighted_loss = (weights * train_loss).sum()
             solver_opt.zero_grad()
-            weighted_loss.backward(retain_graph=True)
-
-            gw = []
-            for ii in range(len(train_loss)):
-                dl = torch.autograd.grad(weights[ii] * train_loss[ii], solver_net.parameters(), retain_graph=True, create_graph=True)[0]
-                gw.append(torch.norm(dl))
-            
-            gw = torch.stack(gw)
-            loss_ratio = train_loss.detach() / l0
-            rt = loss_ratio / loss_ratio.mean()
-            gw_avg = gw.mean().detach()
-            constant = (gw_avg * rt ** 0.01).detach()
-            gradnorm_loss = torch.abs(gw - constant).sum()
-            optimizer_gradnorm.zero_grad()
-            gradnorm_loss.backward()
-            optimizer_gradnorm.step()
+            weighted_loss.backward()
             solver_opt.step()
-            optimizer_gradnorm.step()
-
-            weights = (T * weights / weights.sum()).detach()
-            weights = torch.nn.Parameter(weights)
-            optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
-            iters += 1
 
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
+        
+        if i % 100 == 0:
+            Xtrain = data.trainX
+            Xtrain = Xtrain.to(DEVICE)
+            Yhat_train = solver_net(Xtrain)
+            train_loss = total_loss(data, Xtrain, Yhat_train, args)
+            weights = update_loss_weights(solver_net, solver_opt, train_loss, weights)
+        
+        if i % 100 == 0 and i > 0:
+            scheduler.step()
 
+        # print(
+        #     'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, time {:.4f}'.format(
+        #         i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
+        #         np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
+        #         np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
+        #         np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
         print(
-            'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, time {:.4f}'.format(
+            'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, time {:.4f}, test eval {:.4f}, test ineq max {:.4f}'.format(
                 i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
                 np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
-                np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
+                np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time']),
+                np.mean(epoch_stats['test_eval']), np.mean(epoch_stats['test_ineq_max'])))
 
 
         if args['saveAllStats']:
@@ -240,9 +233,9 @@ def train_net(data, args, save_dir):
             with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
                 torch.save(solver_net.state_dict(), f)
         
-        if (i+1) % 20 == 0:
-            args['factor'] = args['factor'] * 1.2
-            flag = True
+        # if (i+1) % 20 == 0:
+        #     args['factor'] = args['factor'] * 1.2
+        #     flag = True
             
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
@@ -324,25 +317,58 @@ def eval_net(data, X, solver_net, args, prefix, stats):
              torch.sum(torch.abs(data.eq_resid(X, Ynew)) > 100 * eps_converge, dim=1).detach().cpu().numpy())
     return stats
 
-def log_barrier_vectorized(z, t):
-    t_tensor = torch.ones(z.shape, device=DEVICE) * t
-    return torch.where(z <= -1 / t**2, -torch.log(-z) / t, t * z - torch.log(1 / (t_tensor**2)) / t + 1 / t)
+# def log_barrier_vectorized(z, t):
+#     t_tensor = torch.ones(z.shape, device=DEVICE) * t
+#     return torch.where(z <= -1 / t**2, -torch.log(-z) / t, t * z - torch.log(1 / (t_tensor**2)) / t + 1 / t)
+
+# def total_loss(data, X, Y, args):
+#     t = args['factor']
+#     obj_cost = data.obj_fn(Y).mean(dim=0)
+#     ineq_resid = data.ineq_resid(X, Y)
+#     ineq_resid_bar = torch.zeros_like(ineq_resid)
+#     for i in range(ineq_resid.shape[0]):
+#         ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], t)
+#     # ineq_resid_bar = ineq_resid_bar.mean(dim=0)
+#     ineq_resid_bar = ineq_resid_bar.sum(dim=1).mean(dim=0)
+#     # ineq_resid_bar = log_barrier_vectorized(ineq_resid, t).mean(dim=0)
+
+#     # append obj_cost to ineq_resid_bar
+#     loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0)))
+
+#     return loss
 
 def total_loss(data, X, Y, args):
-    t = args['factor']
-    obj_cost = torch.clamp(data.obj_fn(Y).mean(dim=0)-3.86, 0) * 100
-    ineq_resid = data.ineq_resid(X, Y)
-    ineq_resid_bar = torch.zeros_like(ineq_resid)
-    for i in range(ineq_resid.shape[0]):
-        ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], t)
-    # ineq_resid_bar = ineq_resid_bar.mean(dim=0)
-    ineq_resid_bar = ineq_resid_bar.sum(dim=1).mean(dim=0)
-    # ineq_resid_bar = log_barrier_vectorized(ineq_resid, t).mean(dim=0)
-
-    # append obj_cost to ineq_resid_bar
-    loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0)))
-
+    obj_cost = data.obj_fn(Y).mean(dim=0)
+    ineq_dist = data.ineq_dist(X, Y).mean(dim=0) * 0.001
+    ineq1 = ineq_dist[np.arange(data.ng*2)].sum()
+    ineq2 = ineq_dist[np.arange(data.ng*2, data.ng*2+data.ng*2)].sum()
+    ineq3 = ineq_dist[np.arange(data.ng*2+data.ng*2, data.nineq)].sum()
+    
+    # loss = torch.cat((obj_cost.unsqueeze(0), ineq_hard.unsqueeze(0), ineq_easy.unsqueeze(0)))
+    loss = torch.cat((obj_cost.unsqueeze(0), ineq2.unsqueeze(0), ineq3.unsqueeze(0)))
     return loss
+
+def update_loss_weights(model, optimizer, loss, weights, alpha=0.1, weight_maximum = 1e6):
+    return torch.tensor([min(weight_maximum, (1-alpha)*weights[i].item() + alpha * loss[0].item()/l.item()) for i, l in enumerate(loss)], device=DEVICE)
+
+
+# def update_loss_weights(model, optimizer, loss_components, weights, alpha=0.1):
+#     # Compute gradients for each loss component
+#     optimizer.zero_grad()
+
+#     obj_loss = loss_components[0]
+#     obj_loss.backward(retain_graph=True)
+#     obj_gradients = torch.cat([p.grad.view(-1) for p in model.parameters() if p.grad is not None])
+#     maximum = torch.max(torch.abs(obj_gradients)).item()
+
+#     new_weights = [1.0]
+#     for i, loss in enumerate(loss_components[1:]):
+#         loss.backward(retain_graph=True)
+#         gradients = torch.cat([p.grad.view(-1) for p in model.parameters() if p.grad is not None])
+#         new_weights.append((1 - alpha) * weights[i+1].item() + alpha * (maximum / torch.mean(torch.abs(gradients)).item()))
+
+#     return torch.tensor(new_weights, device=DEVICE)
+
 
 ######### Models
 

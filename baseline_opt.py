@@ -22,7 +22,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='baseline_opt')
-    parser.add_argument('--probType', type=str, default='acopf118', help='problem type')
+    parser.add_argument('--probType', type=str, default='acopf39', help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -41,6 +41,9 @@ def main():
         help='total number of datapoints for nonconvex problem')
     parser.add_argument('--corrEps', type=float,
         help='correction procedure tolerance')
+
+    parser.add_argument('--sample', type=str, default='uniform',
+        help='how to sample data for acopf problems')
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
@@ -61,13 +64,16 @@ def main():
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif 'acopf' in prob_type:
-        filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        if args['sample'] == 'uniform':
+            filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        elif args['sample'] == 'truncated_normal':
+            filepath = os.path.join('datasets', 'acopf_T', prob_type+'_dataset')
     else:
         raise NotImplementedError
 
     with open(filepath, 'rb') as f:
         dataset = pickle.load(f)
-    data = ACOPFProblem(dataset, train_num=1000, valid_num=100, test_num=100)
+    data = ACOPFProblem(dataset, train_num=1000, valid_num=50, test_num=50)
     data._device = DEVICE
     print(DEVICE)
     for attr in dir(data):
@@ -90,6 +96,7 @@ def main():
     for solver in solvers:
         save_dir = os.path.join('results', str(data), 'baselineOpt-{}'.format(solver),
             'run', str(time.time()).replace('.', '-'))
+        print(save_dir)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         Yvalid_opt, valid_time_total, valid_time_parallel = data.opt_solve(data.validX, solver_type=solver, tol=args['corrEps'])

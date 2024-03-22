@@ -18,12 +18,13 @@ from utils import my_hash, str_to_bool, ACOPFProblem
 import default_args
 
 import wandb
+from collections import OrderedDict
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='acopf118'
+    parser.add_argument('--probType', type=str, default='acopf57'
                         , help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -55,9 +56,9 @@ def main():
         help='fraction of weight given to equality constraints (vs. inequality constraints) in loss')
     parser.add_argument('--useCompl', type=str_to_bool,
         help='whether to use completion')
-    parser.add_argument('--useTrainCorr', type=str_to_bool,
+    parser.add_argument('--useTrainCorr', type=str_to_bool, default=False,
         help='whether to use correction during training')
-    parser.add_argument('--useTestCorr', type=str_to_bool,
+    parser.add_argument('--useTestCorr', type=str_to_bool, default=False,
         help='whether to use correction during testing')
     parser.add_argument('--corrMode', choices=['partial', 'full'],
         help='employ DC3 correction (partial) or naive correction (full)')
@@ -75,6 +76,9 @@ def main():
         help='whether to save all stats, or just those from latest epoch')
     parser.add_argument('--resultsSaveFreq', type=int,
         help='how frequently (in terms of number of epochs) to save stats to file')
+
+    parser.add_argument('--sample', type=str, default='truncated_normal', #truncated_normal
+        help='how to sample data for acopf problems')
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
@@ -95,7 +99,12 @@ def main():
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif 'acopf' in prob_type:
-        filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        if args['sample'] == 'uniform':
+            filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        elif args['sample'] == 'truncated_normal':
+            filepath = os.path.join('datasets', 'acopf_T', prob_type+'_dataset')
+        else:
+            raise NotImplementedError
     else:
         raise NotImplementedError
 
@@ -111,6 +120,10 @@ def main():
                 setattr(data, attr, var.to(DEVICE))
             except AttributeError:
                 pass
+    
+    name = "DC3"
+    if args["useTrainCorr"] == False and args["useTestCorr"] == False:
+        name = "DC3_nocorr"
 
     save_dir = os.path.join('results', str(data), 'method', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
@@ -120,15 +133,15 @@ def main():
         pickle.dump(args, f)
     
     # Run method
-    with wandb.init(project=prob_type, config=args, name="DC3"):
-        args = wandb.config
-        solver_net, stats = train_net(data, args, save_dir)
-
+    # with wandb.init(project=prob_type+'_'+args['sample'], config=args, name=name):
+    #     args = wandb.config
+    #     solver_net, stats = train_net(data, args, save_dir)
+    solver_net, stats = train_net(data, args, save_dir)
 
 
 def train_net(data, args, save_dir):
-    solver_step = args['lr']
-    nepochs = args['epochs']
+    solver_step = 5e-4 #args['lr']
+    nepochs = 1000 #args['epochs']
     batch_size = args['batchSize']
 
     train_dataset = TensorDataset(data.trainX)
@@ -142,6 +155,12 @@ def train_net(data, args, save_dir):
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
+    # solver_net.load_state_dict(torch.load("/home/jxxiong/A-xjx/DC3/results/ACOPF-57-truncated_normal-0-0.5-0.7-1000-50-50/method/f8e525d65ef9ca4faebe8aaa1bfb88ec2bbd4d8a/1710313478-6379766/model_weights.pth"))
+
+    # # # only train the last layer with 'output' in the name
+    # for name, param in solver_net.named_parameters():
+    #     if "output" not in name:
+    #         param.requires_grad = False
 
     stats = {}
     for i in range(nepochs):
@@ -174,22 +193,21 @@ def train_net(data, args, save_dir):
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
 
+        # print(
+        #     'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}, test eval {:.4f}, test ineq max {:.4f},  ineq max less {:.4f}'.format(
+        #         i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
+        #         np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
+        #         np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
+        #         np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time']),
+        #         np.mean(epoch_stats['test_eval']), np.mean(epoch_stats['test_ineq_max']),
+        #         np.mean(epoch_stats['test_ineq_max_less'])))
         print(
-            'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}'.format(
+            'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}, test eval {:.4f}, test ineq max {:.4f}'.format(
                 i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
                 np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
-                np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time'])))
-
-        wandb.log({'train_loss': np.mean(epoch_stats['train_loss']),
-                   'valid_eval': np.mean(epoch_stats['valid_eval']),
-                   'valid_dist': np.mean(epoch_stats['valid_dist']),
-                   'valid_ineq_max': np.mean(epoch_stats['valid_ineq_max']),
-                   'valid_ineq_mean': np.mean(epoch_stats['valid_ineq_mean']),
-                   'valid_eq_max': np.mean(epoch_stats['valid_eq_max']),
-                   'valid_steps': np.mean(epoch_stats['valid_steps']),
-                   'valid_time': np.mean(epoch_stats['valid_time']),
-                   'train_time': np.mean(epoch_stats['train_time'])})
+                np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time']),
+                np.mean(epoch_stats['test_eval']), np.mean(epoch_stats['test_ineq_max'])))
 
         if args['saveAllStats']:
             if i == 0:
@@ -213,9 +231,9 @@ def train_net(data, args, save_dir):
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
     
-    torch.save(solver_net.state_dict(), os.path.join(wandb.run.dir, 'model_weights.pth'))
-
-    wandb.finish()
+    torch.save(solver_net.state_dict(), os.path.join(save_dir, 'model_weights.pth'))
+    print(save_dir)
+    # wandb.finish()
     return solver_net, stats
 
 # Modifies stats in place
@@ -250,7 +268,9 @@ def eval_net(data, X, solver_net, args, prefix, stats):
     dict_agg(stats, make_prefix('loss'), total_loss(data, X, Ynew, args).detach().cpu().numpy())
     dict_agg(stats, make_prefix('eval'), data.obj_fn(Ycorr).detach().cpu().numpy())
     dict_agg(stats, make_prefix('dist'), torch.norm(Ycorr - Y, dim=1).detach().cpu().numpy())
-    dict_agg(stats, make_prefix('ineq_max'), torch.max(data.ineq_dist(X, Ycorr), dim=1)[0].detach().cpu().numpy())
+    # dict_agg(stats, make_prefix('ineq_max'), torch.max(data.ineq_dist(X, Ycorr), dim=1)[0].detach().cpu().numpy())
+    dict_agg(stats, make_prefix('ineq_max'), torch.max(torch.clamp(data.ineq_resid_pg(X, Ycorr), 0), dim=1)[0].detach().cpu().numpy())
+    # dict_agg(stats, make_prefix('ineq_max_less'), torch.max(data.ineq_dist2(X, Ycorr), dim=1)[0].detach().cpu().numpy())
     dict_agg(stats, make_prefix('ineq_mean'), torch.mean(data.ineq_dist(X, Ycorr), dim=1).detach().cpu().numpy())
     dict_agg(stats, make_prefix('ineq_num_viol_0'),
              torch.sum(data.ineq_dist(X, Ycorr) > eps_converge, dim=1).detach().cpu().numpy())
@@ -289,13 +309,22 @@ def eval_net(data, X, solver_net, args, prefix, stats):
              torch.sum(torch.abs(data.eq_resid(X, Ynew)) > 100 * eps_converge, dim=1).detach().cpu().numpy())
     return stats
 
+# def total_loss(data, X, Y, args):
+#     obj_cost = data.obj_fn(Y)
+#     ineq_dist = data.ineq_dist(X, Y)
+#     ineq_cost = torch.norm(ineq_dist, dim=1)
+#     eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
+#     return obj_cost + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost + \
+#             args['softWeight'] * args['softWeightEqFrac'] * eq_cost
+
 def total_loss(data, X, Y, args):
     obj_cost = data.obj_fn(Y)
-    ineq_dist = data.ineq_dist(X, Y)
+    ineq_dist = torch.clamp(data.ineq_resid_pg(X, Y), 0)
     ineq_cost = torch.norm(ineq_dist, dim=1)
     eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
-    return obj_cost + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost + \
+    return args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost + \
             args['softWeight'] * args['softWeightEqFrac'] * eq_cost
+
 
 def grad_steps(data, X, Y, args):
     take_grad_steps = args['useTrainCorr']
@@ -317,6 +346,9 @@ def grad_steps(data, X, Y, args):
                 eq_step = data.eq_grad(X, Y_new)
                 Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
             
+            # if torch.max(torch.abs(Y_step)) > 1e16:
+            #     break
+
             new_Y_step = lr * Y_step + momentum * old_Y_step
             Y_new = Y_new - new_Y_step
 
@@ -353,6 +385,9 @@ def grad_steps_all(data, X, Y, args):
                     eq_step = data.eq_grad(X, Y_new)
                     Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
                 
+                # if torch.max(torch.abs(Y_step)) > 1e16:
+                #     break
+
                 new_Y_step = lr * Y_step + momentum * old_Y_step
                 Y_new = Y_new - new_Y_step
 
@@ -365,39 +400,76 @@ def grad_steps_all(data, X, Y, args):
 
 
 ######### Models
-
 class NNSolver(nn.Module):
     def __init__(self, data, args):
         super().__init__()
         self._data = data
         self._args = args
-        layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
-        layers = reduce(operator.add,
-            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
-                for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-        
-        output_dim = data.ydim - data.nknowns
+        # layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
+        layer_sizes = [data.xdim, 200, 200]
 
-        if self._args['useCompl']:
-            layers += [nn.Linear(layer_sizes[-1], output_dim - data.neq)]
-        else:
-            layers += [nn.Linear(layer_sizes[-1], output_dim)]
+        output_dim = data.ydim - data.nknowns - data.neq
 
-        for layer in layers:
-            if type(layer) == nn.Linear:
-                nn.init.kaiming_normal_(layer.weight)
+        dic = []
+        for i in range(len(layer_sizes)-1):
+            dic.append((f'linear{i}', nn.Linear(layer_sizes[i], layer_sizes[i+1])))
+            dic.append((f'batchnorm{i}', nn.BatchNorm1d(layer_sizes[i+1])))
+            dic.append((f'activation{i}', nn.ELU()))
+            dic.append((f'dropout{i}', nn.Dropout(p=0.1)))
 
-        self.net = nn.Sequential(*layers)
+        dic.append((f'linear_output', nn.Linear(layer_sizes[-1], output_dim)))
+        self.net = nn.Sequential(OrderedDict(dic))
+
+        for name, param in self.net.named_parameters():
+            if "linear" in name and "weight" in name:
+                nn.init.kaiming_normal_(param)
 
     def forward(self, x):
-        out = self.net(x)
+        prob_type = self._args['probType']
+        if prob_type == 'simple':
+            return self.net(x)
+        elif prob_type == 'nonconvex':
+            return self.net(x)
+        elif 'acopf' in prob_type:
+            out = self.net(x)
+            output = nn.Sigmoid()(out)   # used to interpolate between max and min values
+            return self._data.complete_partial(x, output)
+
+# class NNSolver(nn.Module):
+#     def __init__(self, data, args):
+#         super().__init__()
+#         self._data = data
+#         self._args = args
+#         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
+#         layers = reduce(operator.add,
+#             [[nn.Linear(a,b), 
+#             #   nn.BatchNorm1d(b), 
+#               nn.ELU(), 
+#               nn.Dropout(p=0.1)]
+#                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
+        
+#         output_dim = data.ydim - data.nknowns
+
+#         if self._args['useCompl']:
+#             layers += [nn.Linear(layer_sizes[-1], output_dim - data.neq)]
+#         else:
+#             layers += [nn.Linear(layer_sizes[-1], output_dim)]
+
+#         for layer in layers:
+#             if type(layer) == nn.Linear:
+#                 nn.init.kaiming_normal_(layer.weight)
+
+#         self.net = nn.Sequential(*layers)
+
+#     def forward(self, x):
+#         out = self.net(x)
  
-        if self._args['useCompl']:
-            if 'acopf' in self._args['probType']:
-                out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-            return self._data.complete_partial(x, out)
-        else:
-            return self._data.process_output(x, out)
+#         if self._args['useCompl']:
+#             if 'acopf' in self._args['probType']:
+#                 out = nn.Sigmoid()(out)   # used to interpolate between max and min values
+#             return self._data.complete_partial(x, out)
+#         else:
+#             return self._data.process_output(x, out)
 
 if __name__=='__main__':
     main()

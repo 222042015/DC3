@@ -78,6 +78,9 @@ def main():
     parser.add_argument('--resultsSaveFreq', type=int,
         help='how frequently (in terms of number of epochs) to save stats to file')
 
+    parser.add_argument('--sample', type=str, default='truncated_normal',
+        help='how to sample data for acopf problems')
+
     args = parser.parse_args()
     args = vars(args) # change to dictionary
     # defaults = default_args.deepv_default_args(args['probType'])
@@ -98,7 +101,10 @@ def main():
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif 'acopf' in prob_type:
-        filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        if args['sample'] == 'uniform':
+            filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+        elif args['sample'] == 'truncated_normal':
+            filepath = os.path.join('datasets', 'acopf_T', prob_type+'_dataset')
     else:
         raise NotImplementedError
 
@@ -129,200 +135,11 @@ def main():
         config = wandb.config
         solver_net, stats = train_net(data, args, save_dir)
 
-# def train_net(data, args, save_dir):
-#     solver_step = args['lr']
-#     nepochs = 2000 #args['epochs']
-#     batch_size = 100
-#     solver_step = 0.0005
-
-#     train_dataset = TensorDataset(data.trainX)
-#     valid_dataset = TensorDataset(data.validX)
-#     test_dataset = TensorDataset(data.testX)
-
-#     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-#     valid_loader = DataLoader(valid_dataset, batch_size=len(valid_dataset))
-#     test_loader = DataLoader(test_dataset, batch_size=len(test_dataset))
-
-#     solver_net = NNSolver(data, args)
-#     solver_net.to(DEVICE)
-#     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
-
-#     classifier = Classifier(data, args)
-#     classifier.to(DEVICE)
-#     classifier_opt = optim.Adam(classifier.parameters(), lr=5e-4)
-
-#     buffer = BalancedBuffer(2000)
-
-#     try:
-#         state_dict = torch.load('model_weights.pth')
-#     except:
-#         raise ValueError('No model weights found')
-    
-#     for name, param in solver_net.named_parameters():
-#         if 'output' in name:
-#             param.data = state_dict[name][data._partial_unknown_vars]
-#         elif name in state_dict:
-#             param.data = state_dict[name]
-
-#     stats = {}
-#     iters = 0
-#     factor = 1
-#     args['factor'] = factor
-#     flag = True
-
-
-#     for i in range(nepochs):
-#         epoch_stats = {}
-
-#         # Get valid loss
-#         solver_net.eval()
-#         for Xvalid in valid_loader:
-#             Xvalid = Xvalid[0].to(DEVICE)
-#             eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
-
-#         # Get test loss
-#         solver_net.eval()
-#         for Xtest in test_loader:
-#             Xtest = Xtest[0].to(DEVICE)
-#             eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
-
-#         # Get train loss
-        
-#         solver_net.train()
-#         classifier.eval()
-#         for Xtrain in train_loader:
-#             Xtrain = Xtrain[0].to(DEVICE)
-#             start_time = time.time()
-            
-#             Yhat_prob = solver_net(Xtrain)
-#             Yhat_partial_train = data.scale_partial(Yhat_prob)
-#             Yhat_train, converged = data.complete_partial(Xtrain, Yhat_partial_train)
-#             buffer.add(Yhat_prob, converged)
-#             train_loss = total_loss(data, Xtrain, Yhat_train, args)
-
-#             # if i <= 40 and converged.sum() > 0:
-#             #     Xtrain_conv = Xtrain[converged.bool(), :]
-#             #     Yhat_train_conv = Yhat_train[converged.bool(), :]
-#             #     train_loss = total_loss(data, Xtrain_conv, Yhat_train_conv, args)
-#             # else:
-#             #     train_loss = total_loss(data, Xtrain, Yhat_train, args)
-
-#             # # add classifer loss to the loss to drive the model to predict feasible solutions
-#             # if i >= 20 and len(buffer.buffer_0) > 0 and len(buffer.buffer_1) > 0:
-#             #     feasible = classifier(Yhat_prob).squeeze(-1)
-#             #     label = torch.ones(feasible.shape, device=DEVICE, dtype=torch.long)
-#             #     class_loss = classifier_loss(feasible, label).mean() * 100000
-#             #     # append the class_loss to the train_loss
-#             #     train_loss = torch.cat((train_loss, class_loss.unsqueeze(0)))
-
-#             # if i >= 20 and len(buffer.buffer_0) > 0 and len(buffer.buffer_1) > 0:
-#             if 1:
-#                 # sample positive samples from buffer
-#                 samples, labels = buffer.sample(batch_size)
-#                 # replace 0 in labels with -1
-#                 labels[labels == 0] = -1
-#                 # compute the similarity loss between prediction and the samples
-#                 sim_loss = nn.CosineEmbeddingLoss()(Yhat_prob[:len(samples)], samples, labels) * 1e6
-#                 train_loss = torch.cat((train_loss, sim_loss.unsqueeze(0)))
-
-
-#             if flag: # reinitialize weights after updating the factor
-#                 weights = torch.ones_like(train_loss)
-#                 weights = torch.nn.Parameter(weights)
-#                 T = weights.sum().detach()
-#                 optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
-#                 l0 = train_loss.detach()
-#                 flag = False
-            
-#             weighted_loss = (weights * train_loss).sum()
-#             solver_opt.zero_grad()
-#             weighted_loss.backward(retain_graph=True)
-
-#             gw = []
-#             for ii in range(len(train_loss)):
-#                 dl = torch.autograd.grad(weights[ii] * train_loss[ii], solver_net.parameters(), retain_graph=True, create_graph=True)[0]
-#                 gw.append(torch.norm(dl))
-            
-#             gw = torch.stack(gw)
-#             loss_ratio = train_loss.detach() / l0
-#             rt = loss_ratio / loss_ratio.mean()
-#             gw_avg = gw.mean().detach()
-#             constant = (gw_avg * rt ** 0.01).detach()
-#             gradnorm_loss = torch.abs(gw - constant).sum()
-#             optimizer_gradnorm.zero_grad()
-#             gradnorm_loss.backward()
-#             optimizer_gradnorm.step()
-#             solver_opt.step()
-#             optimizer_gradnorm.step()
-
-#             weights = (T * weights / weights.sum()).detach()
-#             weights = torch.nn.Parameter(weights)
-#             optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
-#             iters += 1
-
-#             train_time = time.time() - start_time
-#             dict_agg(epoch_stats, 'train_loss', train_loss.sum().unsqueeze(0).detach().cpu().numpy())
-#             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
-
-#         print(
-#             'Epoch {}: train loss {:.4f}, eval {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, time {:.4f}'.format(
-#                 i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
-#                 np.mean(epoch_stats['valid_ineq_max']),
-#                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
-#                 np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
-
-
-#         if args['saveAllStats']:
-#             if i == 0:
-#                 for key in epoch_stats.keys():
-#                     stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
-#             else:
-#                 for key in epoch_stats.keys():
-#                     stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
-#         else:
-#             stats = epoch_stats
-
-#         if (i % args['resultsSaveFreq'] == 0):
-#             with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
-#                 pickle.dump(stats, f)
-#             with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
-#                 torch.save(solver_net.state_dict(), f)
-        
-#         if (i+1) % 20 == 0:
-#             args['factor'] = args['factor'] * 1.2
-#             flag = True
-
-#         # if i <= 20 or i % 2 == 0:
-#         #     # train the classifier
-#         #     classifier.train()
-#         #     solver_net.eval()
-#         #     class_loss = []
-#         #     for s in range(1000):
-#         #         if len(buffer.buffer_0) == 0 or len(buffer.buffer_1) == 0:
-#         #             break
-#         #         # sample the data from the buffer
-#         #         Xtrain, Ytrain = buffer.sample(200)
-#         #         classifier_opt.zero_grad()
-#         #         pred = classifier(Xtrain).squeeze(-1)
-#         #         loss = classifier_loss(pred, Ytrain)
-#         #         loss.mean().backward()
-#         #         classifier_opt.step()
-#         #         class_loss.append(loss.mean().detach().cpu().numpy())
-#         #         if (s+1) % 100 == 0:
-#         #             print('Epoch {}: train classifier loss {:.4f}'.format(s, np.mean(class_loss)))
-
-
-#     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
-#         pickle.dump(stats, f)
-#     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
-#         torch.save(solver_net.state_dict(), f)
-#     return solver_net, stats
-
 def train_net(data, args, save_dir):
     solver_step = args['lr']
     nepochs = 2000 #args['epochs']
     batch_size = 100
-    solver_step = 0.0001
+    solver_step = 0.0005
 
     train_dataset = TensorDataset(data.trainX)
     valid_dataset = TensorDataset(data.validX)
@@ -347,26 +164,28 @@ def train_net(data, args, save_dir):
 
 
     # load the weights from pure NN network
-    # try:
-    #     state_dict = torch.load('model_weights.pth')
-    # except:
-    #     raise ValueError('No model weights found')
+    try:
+        state_dict = torch.load('/home/jxxiong/A-xjx/DC3/results/ACOPF-39-truncated_normal-0-0.5-0.7-1000-50-50/baselineNN/a20e17dbbb6c21cc762d46a47179b825eea8b81c/1709554715-7339914/model_weights.pth')
+    except:
+        raise ValueError('No model weights found')
     
-    # for name, param in solver_net.named_parameters():
-    #     if 'output' in name:
-    #         param.data = state_dict[name][data._partial_unknown_vars]
-    #     elif name in state_dict:
-    #         param.data = state_dict[name]
+    for name, param in solver_net.named_parameters():
+        if 'output' in name:
+            param.data = state_dict[name][data._partial_unknown_vars]
+        elif name in state_dict:
+            param.data = state_dict[name]
 
     stats = {}
     iters = 0
-    factor = 1
+    factor = 5
     args['factor'] = factor
     flag = True
-    warm_start = 1
+    warm_start = 5
 
     wandb.watch(solver_net, log="all")
     wandb.watch(classifier, log="all")
+
+    class_decay = 1e5
 
 
     for i in range(nepochs):
@@ -387,6 +206,8 @@ def train_net(data, args, save_dir):
             Yhat_train, converged = data.complete_partial(Xtrain, Yhat_partial_train)
             buffer.add(Yhat_prob, converged)
             if i < warm_start: # warm start to collect enough samples for adversarial training
+                train_loss = total_loss(data, Xtrain, Yhat_train, args)
+                train_loss.sum().backward()
                 continue
             # train_loss = total_loss(data, Xtrain, Yhat_train, args)
 
@@ -415,46 +236,47 @@ def train_net(data, args, save_dir):
             classifier.eval()
             true_label = torch.ones(converged.shape, device=DEVICE)
             output = classifier(Yhat_prob).view(-1)
-            errSolver = criterion(output, true_label).view(-1) * 1e6
+            errSolver = criterion(output, true_label).view(-1) * class_decay
             # errSolver.backward()
             train_loss = total_loss(data, Xtrain, Yhat_train, args)
             train_loss = torch.cat((train_loss, errSolver))
 
-            if flag: # reinitialize weights after updating the factor
-                weights = torch.ones_like(train_loss)
-                weights = torch.nn.Parameter(weights)
-                T = weights.sum().detach()
-                optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
-                l0 = train_loss.detach()
-                flag = False
-            
-            weighted_loss = (weights * train_loss).sum()
-            weighted_loss.backward(retain_graph=True)
-
-            gw = []
-            for ii in range(len(train_loss)):
-                dl = torch.autograd.grad(weights[ii] * train_loss[ii], solver_net.parameters(), retain_graph=True, create_graph=True)[0]
-                gw.append(torch.norm(dl))
-            
-            gw = torch.stack(gw)
-            loss_ratio = train_loss.detach() / l0
-            rt = loss_ratio / loss_ratio.mean()
-            gw_avg = gw.mean().detach()
-            constant = (gw_avg * rt ** 0.01).detach()
-            gradnorm_loss = torch.abs(gw - constant).sum()
-            optimizer_gradnorm.zero_grad()
-            gradnorm_loss.backward()
-            optimizer_gradnorm.step()
+            solver_opt.zero_grad()
+            train_loss.sum().backward()
             solver_opt.step()
-            optimizer_gradnorm.step()
 
-            weights = (T * weights / weights.sum()).detach()
-            weights = torch.nn.Parameter(weights)
-            optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
-            iters += 1
+            # if flag: # reinitialize weights after updating the factor
+            #     weights = torch.ones_like(train_loss)
+            #     weights = torch.nn.Parameter(weights)
+            #     T = weights.sum().detach()
+            #     optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
+            #     l0 = train_loss.detach()
+            #     flag = False
+            
+            # weighted_loss = (weights * train_loss).sum()
+            # weighted_loss.backward(retain_graph=True)
 
-            # train_loss.sum().backward()
-            solver_opt.step()
+            # gw = []
+            # for ii in range(len(train_loss)):
+            #     dl = torch.autograd.grad(weights[ii] * train_loss[ii], solver_net.parameters(), retain_graph=True, create_graph=True)[0]
+            #     gw.append(torch.norm(dl))
+            
+            # gw = torch.stack(gw)
+            # loss_ratio = train_loss.detach() / l0
+            # rt = loss_ratio / loss_ratio.mean()
+            # gw_avg = gw.mean().detach()
+            # constant = (gw_avg * rt ** 0.01).detach()
+            # gradnorm_loss = torch.abs(gw - constant).sum()
+            # optimizer_gradnorm.zero_grad()
+            # gradnorm_loss.backward()
+            # optimizer_gradnorm.step()
+            # solver_opt.step()
+            # optimizer_gradnorm.step()
+
+            # weights = (T * weights / weights.sum()).detach()
+            # weights = torch.nn.Parameter(weights)
+            # optimizer_gradnorm = torch.optim.Adam([weights], lr=0.01)
+            # iters += 1
             
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.sum().unsqueeze(0).detach().cpu().numpy())
@@ -509,6 +331,12 @@ def train_net(data, args, save_dir):
         if (i+1) % 20 == 0:
             args['factor'] = args['factor'] * 1.2
             flag = True
+        
+        if (i+1) % 40 == 0:
+            if errSolver/class_decay < 1e-3:
+                class_decay = 1.0
+            else:
+                class_decay = class_decay * 0.5
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
         pickle.dump(stats, f)
@@ -538,25 +366,6 @@ def total_loss(data, X, Y, args):
 
     loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0))) #, eq_cost.unsqueeze(0)))
     return loss
-
-def eq_loss(data, X, Y):
-    eq_resid = data.eq_resid(X, Y)
-    return torch.norm(eq_resid, dim=1).mean(dim=0)
-
-def classifier_loss(pred, label):
-    pred = torch.clamp(pred, 1e-7, 1 - 1e-7)
-
-    return -label * torch.log(pred) - (1 - label) * torch.log(1 - pred)
-
-def ineq_loss(data, X, Y, args):
-    t = args['factor']
-    ineq_resid = data.ineq_resid(X, Y)
-    ineq_resid_bar = torch.zeros_like(ineq_resid)
-    for i in range(ineq_resid.shape[0]):
-        ineq_resid_bar[i] = log_barrier_vectorized(ineq_resid[i], t)
-    ineq_resid_bar = ineq_resid_bar.sum(dim=1).mean(dim=0)
-
-    return ineq_resid_bar
 
 
 ######### Models
