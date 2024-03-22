@@ -1,8 +1,8 @@
-try:
-    import waitGPU
-    waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
-except ImportError:
-    pass
+# try:
+#     import waitGPU
+#     waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
+# except ImportError:
+#     pass
 
 import torch
 import torch.nn as nn
@@ -27,7 +27,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='acopf57',
+    parser.add_argument('--probType', type=str, default='nonconvex',
                         help='problem type')
         # choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
