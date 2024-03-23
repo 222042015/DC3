@@ -4,9 +4,9 @@ def baseline_opt_default_args(prob_type):
     defaults['simpleIneq'] = 50
     defaults['simpleEq'] = 50
     defaults['simpleEx'] = 10000
-    defaults['nonconvexVar'] = 100
-    defaults['nonconvexIneq'] = 50
-    defaults['nonconvexEq'] = 50
+    defaults['nonconvexVar'] = 200
+    defaults['nonconvexIneq'] = 100
+    defaults['nonconvexEq'] = 100
     defaults['nonconvexEx'] = 10000
 
     if prob_type == 'simple':
@@ -24,9 +24,9 @@ def baseline_nn_default_args(prob_type):
     defaults['simpleIneq'] = 50
     defaults['simpleEq'] = 50
     defaults['simpleEx'] = 10000
-    defaults['nonconvexVar'] = 100
-    defaults['nonconvexIneq'] = 50
-    defaults['nonconvexEq'] = 50
+    defaults['nonconvexVar'] = 200
+    defaults['nonconvexIneq'] = 100
+    defaults['nonconvexEq'] = 100
     defaults['nonconvexEx'] = 10000
     defaults['saveAllStats'] = True
     defaults['resultsSaveFreq'] = 50
@@ -132,9 +132,9 @@ def method_default_args(prob_type):
     defaults['simpleIneq'] = 50
     defaults['simpleEq'] = 50
     defaults['simpleEx'] = 10000
-    defaults['nonconvexVar'] = 100
-    defaults['nonconvexIneq'] = 50
-    defaults['nonconvexEq'] = 50
+    defaults['nonconvexVar'] = 200
+    defaults['nonconvexIneq'] = 100
+    defaults['nonconvexEq'] = 100
     defaults['nonconvexEx'] = 10000
     defaults['saveAllStats'] = True
     defaults['resultsSaveFreq'] = 50
@@ -262,28 +262,6 @@ def pdl_default_args(prob_type):
 
     return defaults
 
-
-def deepv_default_args(prob_type):
-    defaults = {}
-    defaults['saveAllStats'] = True
-    defaults['resultsSaveFreq'] = 50
-
-    if "acopf" in prob_type:
-        defaults['max_outer_iter'] = 100 
-        defaults['max_inner_iter'] = 250 
-        defaults['alpha'] = 2 
-        defaults['tau'] = 0.8 
-        defaults['rho_max'] = 10000
-        defaults['batchSize'] = 200
-        defaults['epochs'] = 2000
-        defaults['lr'] = 1e-3
-        defaults['hiddenSize'] = 200
-    else:
-        raise NotImplementedError
-    
-    return defaults
-
-
 def deeplde_default_args(prob_type):
     defaults = {}
     defaults['simpleVar'] = 100
@@ -315,6 +293,47 @@ def deeplde_default_args(prob_type):
         defaults['lambda'] = 0.1
         defaults['gamma'] = 0.01
 
+    else:
+        raise NotImplementedError
+
+    return defaults
+
+
+def method_eq_proj_default_args(prob_type):
+    defaults = {}
+    defaults['simpleVar'] = 100
+    defaults['simpleIneq'] = 50
+    defaults['simpleEq'] = 50
+    defaults['simpleEx'] = 10000
+    defaults['nonconvexVar'] = 200
+    defaults['nonconvexIneq'] = 100
+    defaults['nonconvexEq'] = 100
+    defaults['nonconvexEx'] = 10000
+    defaults['saveAllStats'] = True
+    defaults['resultsSaveFreq'] = 50
+    defaults['corrEps'] = 1e-4
+
+    if prob_type == 'simple':
+        defaults['epochs'] = 1000
+        defaults['batchSize'] = 200
+        defaults['lr'] = 5e-4
+        defaults['hiddenSize'] = 200
+        defaults['softWeight'] = 100
+        defaults['softWeightEqFrac'] = 0.5
+    elif prob_type == 'nonconvex':
+        defaults['epochs'] = 1000
+        defaults['batchSize'] = 200
+        defaults['lr'] = 5e-4
+        defaults['hiddenSize'] = 200
+        defaults['softWeight'] = 100
+        defaults['softWeightEqFrac'] = 0.5
+    elif 'acopf' in prob_type:
+        defaults['epochs'] = 1000
+        defaults['batchSize'] = 200
+        defaults['lr'] = 1e-3
+        defaults['hiddenSize'] = 200
+        defaults['softWeight'] = 100
+        defaults['softWeightEqFrac'] = 0.5
     else:
         raise NotImplementedError
 
