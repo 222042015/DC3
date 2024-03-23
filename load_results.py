@@ -18,17 +18,20 @@ def main():
 def get_experiment_dirs(path_prefix):
     exper_dirs = {}
 
-    eq = 50
-    for ineq in [10, 30, 50, 70, 90]:
-        exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
+    # eq = 50
+    # for ineq in [10, 30, 50, 70, 90]:
+    #     exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
         
-    ineq = 50
-    for eq in [10, 30, 70, 90]:
-        exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
+    # ineq = 50
+    # for eq in [10, 30, 70, 90]:
+    #     exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
         
-    exper_dirs['nonconvex'] = 'NonconvexProblem-100-50-50-10000'
+    # exper_dirs['nonconvex'] = 'NonconvexProblem-100-50-50-10000'
 
-    exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
+    # exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
+
+    exper_dirs['nonconvex'] = 'NonconvexProblem-200-100-100-10000'
+    # exper_dirs['simple_ineq50_eq50'] = 'SimpleProblem-100-50-50-10000'
 
     for key in exper_dirs.keys():
         exper_dirs[key] = os.path.join(path_prefix, exper_dirs[key])
@@ -63,7 +66,8 @@ def get_status_results(exper_dirs):
             # baselines
             all_methods_dirs = nn_baseline_dirs + \
                 [('baseline_opt_{}'.format(x), 'baselineOpt-{}'.format(x)) for x in \
-                    opt_methods[exper.split('_')[0]]]
+                    opt_methods[exper.split('_')[0]]] +\
+                        [('methodEqProj', 'method_eq_proj')]
             for (method, dirname) in all_methods_dirs:
                 path = os.path.join(exper_dir, dirname)
                 if os.path.exists(path):
