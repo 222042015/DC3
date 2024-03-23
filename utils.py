@@ -848,18 +848,17 @@ class ACOPFProblem:
         vr = vm*torch.cos(va)
         vi = vm*torch.sin(va)
 
-        ## power balance equations
-        tmp1 = vr@self.Ybusr - vi@self.Ybusi
-        tmp2 = -vr@self.Ybusi - vi@self.Ybusr
+        tmp1 = torch.squeeze(torch.matmul(self.Ybusr, vr.unsqueeze(-1)) - torch.matmul(self.Ybusi, vi.unsqueeze(-1)))
+        tmp2 = -torch.squeeze(torch.matmul(self.Ybusi, vr.unsqueeze(-1)) + torch.matmul(self.Ybusr, vi.unsqueeze(-1)))
 
         # real power
         pg_expand = torch.zeros(pg.shape[0], self.nbus, device=self.device)
-        pg_expand[:, self.spv] = pg
+        pg_expand[:, self.spv] = pg 
         real_resid = (pg_expand - X[:, :self.nbus]) - (vr*tmp1 - vi*tmp2)
 
         # reactive power
         qg_expand = torch.zeros(qg.shape[0], self.nbus, device=self.device)
-        qg_expand[:, self.spv] = qg
+        qg_expand[:, self.spv] = qg 
         react_resid = (qg_expand - X[:, self.nbus:]) - (vr*tmp2 + vi*tmp1)
 
         ## all residuals
@@ -867,7 +866,6 @@ class ACOPFProblem:
             real_resid,
             react_resid
         ], dim=1)
-        
         return resids
 
     def ineq_resid(self, X, Y):
@@ -1060,6 +1058,12 @@ class ACOPFProblem:
 
         return np.array(Y), total_time, total_time/len(X_np)
 
+    def projection(self, X, Y, tol=1e-4):
+        # project the Y to the power flow equations using ipopt
+        Y_np = Y.detach().cpu().numpy()
+        X_np = X.detach().cpu().numpy()
+
+        ppc = self.ppc
 
 def PFFunction(data, tol=1e-5, bsz=200, max_iters=30):
     class PFFunctionFn(Function):
