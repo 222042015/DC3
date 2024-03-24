@@ -177,6 +177,7 @@ def train_net(data, args, save_dir):
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
+        # print('train ineq max {:.4f}'.format(data.ineq_dist(Xtrain, Yhat_train).max().detach().cpu().numpy()))
 
 
         # Print results
