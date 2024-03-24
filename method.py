@@ -21,13 +21,14 @@ import os
 import argparse
 
 from utils import my_hash, str_to_bool
+from qcqp_utils import QCQPProbem
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='nonconvex',
+    parser.add_argument('--probType', type=str, default='convex_qcqp',
                         help='problem type')
         # choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
@@ -45,6 +46,14 @@ def main():
     parser.add_argument('--nonconvexEq', type=int,
         help='number of equality constraints for nonconvex problem')
     parser.add_argument('--nonconvexEx', type=int,
+        help='total number of datapoints for nonconvex problem')
+    parser.add_argument('--qcqpVar', type=int,
+        help='number of decision vars for nonconvex problem')
+    parser.add_argument('--qcqpIneq', type=int,
+        help='number of inequality constraints for nonconvex problem')
+    parser.add_argument('--qcqpEq', type=int,
+        help='number of equality constraints for nonconvex problem')
+    parser.add_argument('--qcqpEx', type=int,
         help='total number of datapoints for nonconvex problem')
     parser.add_argument('--epochs', type=int,
         help='number of neural network epochs')
@@ -102,11 +111,18 @@ def main():
     # elif prob_type == 'acopf57':
     elif 'acopf' in prob_type:
         filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+    elif prob_type in ['convex_qcqp']:
+        filepath = os.path.join('datasets', prob_type, "random_qcqp_dataset_var{}_ineq{}_eq{}_ex{}".format(
+            args['qcqpVar'], args['qcqpIneq'], args['qcqpEq'], args['qcqpEx']))
+        with open(filepath, 'rb') as f:
+            dataset = pickle.load(f)
+        data = QCQPProbem(dataset)
     else:
         raise NotImplementedError
 
-    with open(filepath, 'rb') as f:
-        data = pickle.load(f)
+    if prob_type != 'convex_qcqp':
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
     for attr in dir(data):
         var = getattr(data, attr)
         if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
@@ -331,21 +347,38 @@ def grad_steps_all(data, X, Y, args):
         old_Y_step = 0
         old_ineq_step = 0
         old_eq_step = 0
-        with torch.no_grad():
-            while (i == 0 or torch.max(torch.abs(data.eq_resid(X, Y_new))) > eps_converge or
-                           torch.max(data.ineq_dist(X, Y_new)) > eps_converge) and i < max_steps:
-                if partial_corr:
-                    Y_step = data.ineq_partial_grad(X, Y_new)
-                else:
-                    ineq_step = data.ineq_grad(X, Y_new)
-                    eq_step = data.eq_grad(X, Y_new)
-                    Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
-                
-                new_Y_step = lr * Y_step + momentum * old_Y_step
-                Y_new = Y_new - new_Y_step
+        if args['probType'] == 'convex_qcqp':
+            with torch.enable_grad():
+                while (i == 0 or torch.max(torch.abs(data.eq_resid(X, Y_new))) > eps_converge or
+                            torch.max(data.ineq_dist(X, Y_new)) > eps_converge) and i < max_steps:
+                    if partial_corr:
+                        Y_step = data.ineq_partial_grad(X, Y_new)
+                    else:
+                        ineq_step = data.ineq_grad(X, Y_new)
+                        eq_step = data.eq_grad(X, Y_new)
+                        Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
+                    
+                    new_Y_step = lr * Y_step + momentum * old_Y_step
+                    Y_new = Y_new - new_Y_step
 
-                old_Y_step = new_Y_step
-                i += 1
+                    old_Y_step = new_Y_step
+                    i += 1
+        else:
+            with torch.no_grad():
+                while (i == 0 or torch.max(torch.abs(data.eq_resid(X, Y_new))) > eps_converge or
+                            torch.max(data.ineq_dist(X, Y_new)) > eps_converge) and i < max_steps:
+                    if partial_corr:
+                        Y_step = data.ineq_partial_grad(X, Y_new)
+                    else:
+                        ineq_step = data.ineq_grad(X, Y_new)
+                        eq_step = data.eq_grad(X, Y_new)
+                        Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
+                    
+                    new_Y_step = lr * Y_step + momentum * old_Y_step
+                    Y_new = Y_new - new_Y_step
+
+                    old_Y_step = new_Y_step
+                    i += 1
 
         return Y_new, i
     else:
