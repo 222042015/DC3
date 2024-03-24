@@ -30,8 +30,9 @@ def get_experiment_dirs(path_prefix):
 
     # exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
 
-    exper_dirs['nonconvex'] = 'NonconvexProblem-200-100-100-10000'
-    # exper_dirs['simple_ineq50_eq50'] = 'SimpleProblem-100-50-50-10000'
+    exper_dirs['nonconvex'] = 'NonconvexProblem-200-100-100-10000_bak'
+    exper_dirs['simple_ineq100_eq100'] = 'SimpleProblem-200-100-100-10000_bak'
+    exper_dirs['qcqp'] = 'QCQPProblem-100-50-50-10000'
 
     for key in exper_dirs.keys():
         exper_dirs[key] = os.path.join(path_prefix, exper_dirs[key])
@@ -45,7 +46,7 @@ def get_status_results(exper_dirs):
     all_stats = {}
 
     opt_methods = dict([
-            ('simple', ['osqp', 'qpth']), ('nonconvex', ['ipopt']), ('acopf', ['pypower'])
+            ('simple', ['osqp', 'qpth']), ('nonconvex', ['ipopt']), ('acopf', ['pypower']), ('qcqp', ['cvxpy'])
     ])
     nn_baseline_dirs = [('baseline_nn', 'baselineNN'), ('baseline_eq_nn', 'baselineEqNN')]
 
@@ -67,7 +68,7 @@ def get_status_results(exper_dirs):
             all_methods_dirs = nn_baseline_dirs + \
                 [('baseline_opt_{}'.format(x), 'baselineOpt-{}'.format(x)) for x in \
                     opt_methods[exper.split('_')[0]]] +\
-                        [('methodEqProj', 'method_eq_proj')]
+                        [('method_eq_proj', 'method_eq_proj')]
             for (method, dirname) in all_methods_dirs:
                 path = os.path.join(exper_dir, dirname)
                 if os.path.exists(path):
@@ -160,7 +161,7 @@ def check_running_done(path, is_opt=False):
             if os.path.exists(os.path.join(path, 'stats.dict')):
                 with open(os.path.join(path, 'stats.dict'), 'rb') as f:
                     stats = pickle.load(f)
-                is_done = (len(stats['valid_time']) == 1000)
+                is_done = (len(stats['valid_time']) >= 1000)
                 if not is_done:
                     print(len(stats['valid_time']))
         except Exception as e:

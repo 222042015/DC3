@@ -21,14 +21,15 @@ import os
 import argparse
 
 from utils import my_hash, str_to_bool
+from qcqp_utils import QCQPProbem
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='baseline_opt')
-    parser.add_argument('--probType', type=str, default='nonconvex',
-        choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
+    parser.add_argument('--probType', type=str, default='convex_qcqp',
+        choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -44,6 +45,14 @@ def main():
     parser.add_argument('--nonconvexEq', type=int,
         help='number of equality constraints for nonconvex problem')
     parser.add_argument('--nonconvexEx', type=int,
+        help='total number of datapoints for nonconvex problem')
+    parser.add_argument('--qcqpVar', type=int,
+        help='number of decision vars for nonconvex problem')
+    parser.add_argument('--qcqpIneq', type=int,
+        help='number of inequality constraints for nonconvex problem')
+    parser.add_argument('--qcqpEq', type=int,
+        help='number of equality constraints for nonconvex problem')
+    parser.add_argument('--qcqpEx', type=int,
         help='total number of datapoints for nonconvex problem')
     parser.add_argument('--corrEps', type=float,
         help='correction procedure tolerance')
@@ -69,11 +78,18 @@ def main():
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif prob_type == 'acopf57':
         filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
+    elif prob_type in ['convex_qcqp']:
+        filepath = os.path.join('datasets', prob_type, "random_qcqp_dataset_var{}_ineq{}_eq{}_ex{}".format(
+            args['qcqpVar'], args['qcqpIneq'], args['qcqpEq'], args['qcqpEx']))
+        with open(filepath, 'rb') as f:
+            dataset = pickle.load(f)
+        data = QCQPProbem(dataset)
     else:
         raise NotImplementedError
 
-    with open(filepath, 'rb') as f:
-        data = pickle.load(f)
+    if prob_type != 'convex_qcqp':
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
     for attr in dir(data):
         var = getattr(data, attr)
         if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
@@ -89,6 +105,8 @@ def main():
         solvers = ['osqp', 'qpth']
     elif prob_type == 'nonconvex':
         solvers = ['ipopt']
+    elif prob_type == 'convex_qcqp':
+        solvers = ['cvxpy']
     else:
         solvers = ['pypower']
 
