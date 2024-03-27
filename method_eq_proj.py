@@ -22,14 +22,15 @@ import argparse
 
 from utils import my_hash, str_to_bool
 from qcqp_utils import QCQPProbem
+from dcopf_utils import DcopfProblem
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='method_eq_proj')
-    parser.add_argument('--probType', type=str, default='convex_qcqp',
-        choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp'], help='problem type')
+    parser.add_argument('--probType', type=str, default='dcopf',
+        choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp', 'dcopf'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -100,11 +101,16 @@ def main():
         with open(filepath, 'rb') as f:
             dataset = pickle.load(f)
         data = QCQPProbem(dataset)
+    elif prob_type == 'dcopf':
+        filepath = "/home/jxxiong/A-xjx/DC3/datasets/dcopf/dcopf_data"
+        with open(filepath, 'rb') as f:
+            dataset = pickle.load(f)
+        data = DcopfProblem(dataset)
     else:
         raise NotImplementedError
     
 
-    if prob_type != 'convex_qcqp':
+    if prob_type not in ['convex_qcqp', 'dcopf']:
         with open(filepath, 'rb') as f:
             data = pickle.load(f)
     for attr in dir(data):
@@ -127,7 +133,9 @@ def main():
     solver_net, stats = train_net(data, args, save_dir)
 
 
+
 def train_net(data, args, save_dir):
+    print(save_dir)
     solver_step = args['lr']
     nepochs = args['epochs']
     batch_size = args['batchSize']
@@ -143,6 +151,7 @@ def train_net(data, args, save_dir):
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
+    scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=100, gamma=0.95)
 
     stats = {}
     for i in range(nepochs):
@@ -179,6 +188,7 @@ def train_net(data, args, save_dir):
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
         # print('train ineq max {:.4f}'.format(data.ineq_dist(Xtrain, Yhat_train).max().detach().cpu().numpy()))
 
+        scheduler.step()
 
         # Print results
         print(
@@ -283,14 +293,15 @@ def softloss(data, X, Y, args):
     obj_cost = data.obj_fn(Y)
     ineq_cost = torch.norm(data.ineq_dist(X, Y), dim=1)
     eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
-    # return obj_cost + 5 * ineq_cost
-    return obj_cost + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
+    # return obj_cost + 2 * ineq_cost
+    return obj_cost*1e-3 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
 
 def projection(data, X, Y):
     A = data.A
     m = X.shape[1]
     res = Y@A.T - X
     AtA_inv = torch.inverse(A @ A.T)
+    # AtA_inv = torch.pinverse(A@A.T)
     At_AtA_inv = A.T@AtA_inv
     Y_star = Y - (At_AtA_inv @ res.unsqueeze(-1)).squeeze(-1)
     return Y_star
@@ -329,6 +340,11 @@ class NNSolver(nn.Module):
             qg = out2[:, data.ng:2*data.ng] * data.qmax + (1-out2[:, data.ng:2*data.ng]) * data.qmin
             vm = out2[:, 2*data.ng:] * data.vmax + (1- out2[:, 2*data.ng:]) * data.vmin
             return torch.cat([pg, qg, vm, out[:, -data.nbus:]], dim=1)
+        elif prob_type == 'dcopf':
+            out = self.net(x)
+            data = self._data
+            out[:, data.bounded_index] = nn.Sigmoid()(out[:, data.bounded_index]) * data.Ub[data.bounded_index] + (1 - nn.Sigmoid()(out[:, data.bounded_index])) * data.Lb[data.bounded_index]
+            return out
         else:
             raise NotImplementedError
 
