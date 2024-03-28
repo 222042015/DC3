@@ -29,8 +29,8 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='method_eq_proj')
-    parser.add_argument('--probType', type=str, default='dcopf',
-        choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp', 'dcopf'], help='problem type')
+    parser.add_argument('--probType', type=str, default='dcopf200', help='problem type')
+        # choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp', 'dcopf']
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -101,8 +101,8 @@ def main():
         with open(filepath, 'rb') as f:
             dataset = pickle.load(f)
         data = QCQPProbem(dataset)
-    elif prob_type == 'dcopf':
-        filepath = "/home/jxxiong/A-xjx/DC3/datasets/dcopf/dcopf_data"
+    elif 'dcopf' in prob_type:
+        filepath = os.path.join('datasets', 'dcopf', prob_type+"_data")
         with open(filepath, 'rb') as f:
             dataset = pickle.load(f)
         data = DcopfProblem(dataset)
@@ -110,7 +110,7 @@ def main():
         raise NotImplementedError
     
 
-    if prob_type not in ['convex_qcqp', 'dcopf']:
+    if prob_type not in ['convex_qcqp'] and 'dcopf' not in prob_type:
         with open(filepath, 'rb') as f:
             data = pickle.load(f)
     for attr in dir(data):
@@ -331,7 +331,7 @@ class NNSolver(nn.Module):
             qg = out2[:, data.ng:2*data.ng] * data.qmax + (1-out2[:, data.ng:2*data.ng]) * data.qmin
             vm = out2[:, 2*data.ng:] * data.vmax + (1- out2[:, 2*data.ng:]) * data.vmin
             return torch.cat([pg, qg, vm, out[:, -data.nbus:]], dim=1)
-        elif prob_type == 'dcopf':
+        elif 'dcopf' in prob_type:
             out = self.net(x)
             data = self._data
             out[:, data.bounded_index] = nn.Sigmoid()(out[:, data.bounded_index]) * data.Ub[data.bounded_index] + (1 - nn.Sigmoid()(out[:, data.bounded_index])) * data.Lb[data.bounded_index]
