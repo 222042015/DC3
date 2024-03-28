@@ -176,7 +176,7 @@ def train_net(data, args, save_dir):
             start_time = time.time()
             solver_opt.zero_grad()
             Yhat_train = solver_net(Xtrain)
-            Ystar = projection(data, Xtrain, Yhat_train)
+            Ystar = data.projection(Xtrain, Yhat_train)
             if i < 100:
                 train_loss = softloss(data, Xtrain, Yhat_train, args)
             else:
@@ -243,7 +243,7 @@ def eval_net(data, X, solver_net, args, prefix, stats):
 
     raw_end_time = time.time()
 
-    Ycorr = projection(data, X, Y)
+    Ycorr = data.projection(X, Y)
 
     dict_agg(stats, make_prefix('time'), time.time() - start_time, op='sum')
     dict_agg(stats, make_prefix('loss'), softloss(data, X, Y, args).detach().cpu().numpy())
@@ -294,17 +294,8 @@ def softloss(data, X, Y, args):
     ineq_cost = torch.norm(data.ineq_dist(X, Y), dim=1)
     eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
     # return obj_cost + 2 * ineq_cost
-    return obj_cost*1e-3 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
-
-def projection(data, X, Y):
-    A = data.A
-    m = X.shape[1]
-    res = Y@A.T - X
-    AtA_inv = torch.inverse(A @ A.T)
-    # AtA_inv = torch.pinverse(A@A.T)
-    At_AtA_inv = A.T@AtA_inv
-    Y_star = Y - (At_AtA_inv @ res.unsqueeze(-1)).squeeze(-1)
-    return Y_star
+    # dcopf_200 1e-3, 1000, 0.5
+    return obj_cost*1e-4 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
 
 ######### Models
 

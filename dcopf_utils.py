@@ -82,6 +82,9 @@ class DcopfProblem:
         self.ub_index = ub_index
         self.bounded_index = np.intersect1d(lb_index, ub_index)
 
+        AtA_inv = torch.inverse(self.A @ self.A.T)
+        self.At_AtA_inv = self.A.T@AtA_inv
+
 
         ### For Pytorch
         self._device = None
@@ -147,8 +150,14 @@ class DcopfProblem:
     def testY(self):
         return self.Y[int(self.num*(self.train_frac + self.valid_frac)):]
 
+    def projection(self, X, Y):
+        res = Y@self.A.T - X
+        Y_star = Y - (self.At_AtA_inv @ res.unsqueeze(-1)).squeeze(-1)
+        return Y_star
+
     def obj_fn(self, Y):
         return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)
+        # return ((Y@self.Q)*Y + self.p*Y).sum(dim=1)
 
     def eq_resid(self, X, Y):
         return X - Y@self.A.T
@@ -170,7 +179,7 @@ class DcopfProblem:
         return torch.clamp(resids, 0)
 
     def eq_grad(self, X, Y):
-        return 2*(Y@self.A.T - X)@self.A
+        return 0.5*(Y@self.A.T - X)@self.A
 
     def ineq_grad(self, X, Y):
         ineq_dist = self.ineq_dist(X, Y)
@@ -198,31 +207,21 @@ class DcopfProblem:
         return Y
 
     def opt_solve(self, X, solver_type='osqp', tol=1e-4):
-
-        if solver_type == 'qpth':
-            print('running qpth')
-            start_time = time.time()
-            res = QPFunction(eps=tol, verbose=False)(self.Q, self.p, self.G, self.h, self.A, X)
-            end_time = time.time()
-
-            sols = np.array(res.detach().cpu().numpy())
-            total_time = end_time - start_time
-            parallel_time = total_time
-        
-        elif solver_type == 'osqp':
+        if solver_type == 'osqp':
             print('running osqp')
             Q, p, A, G, h = \
                 self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np
             X_np = X.detach().cpu().numpy()
+            lb = self.Lb.detach().cpu().numpy()
+            ub = self.Ub.detach().cpu().numpy()
             Y = []
             total_time = 0
-            c = 0
             for i, Xi in enumerate(X_np):
                 solver = osqp.OSQP()
-                my_A = np.vstack([A, G])
-                my_l = np.hstack([Xi, -np.ones(h.shape[0]) * np.inf])
-                my_u = np.hstack([Xi, h])
-                solver.setup(P=csc_matrix(Q), q=p, A=csc_matrix(my_A), l=my_l, u=my_u, verbose=False, eps_prim_inf=tol)
+                my_A = np.vstack([A, G, np.diag(np.ones(Q.shape[0]))])
+                my_l = np.hstack([Xi, -np.ones(h.shape[0]) * np.inf, lb])
+                my_u = np.hstack([Xi, h, ub])
+                solver.setup(P=csc_matrix(Q), q=p, A=csc_matrix(my_A), l=my_l, u=my_u, verbose=False, eps_prim_inf=1e-4, eps_dual_inf=1e-4, eps_abs=1e-4, eps_rel=1e-4)
                 start_time = time.time()
                 results = solver.solve()
                 end_time = time.time()
@@ -230,10 +229,8 @@ class DcopfProblem:
                 total_time += (end_time - start_time)
                 if results.info.status == 'solved':
                     Y.append(results.x)
-                    c += 1
                 else:
                     Y.append(np.ones(self.ydim) * np.nan)
-                print(f"{i} / {c}")
 
             sols = np.array(Y)
             parallel_time = total_time/len(X_np)
