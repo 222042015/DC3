@@ -22,14 +22,15 @@ import argparse
 
 from utils import my_hash, str_to_bool
 from qcqp_utils import QCQPProbem
+from dcopf_utils import DcopfProblem
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='baseline_opt')
-    parser.add_argument('--probType', type=str, default='convex_qcqp',
-        choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp'], help='problem type')
+    parser.add_argument('--probType', type=str, default='dcopf200', help='problem type')
+        # choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp', 'dcopf']
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -54,7 +55,7 @@ def main():
         help='number of equality constraints for nonconvex problem')
     parser.add_argument('--qcqpEx', type=int,
         help='total number of datapoints for nonconvex problem')
-    parser.add_argument('--corrEps', type=float,
+    parser.add_argument('--corrEps', type=float, default=1e-4,
         help='correction procedure tolerance')
 
     args = parser.parse_args()
@@ -84,10 +85,15 @@ def main():
         with open(filepath, 'rb') as f:
             dataset = pickle.load(f)
         data = QCQPProbem(dataset)
+    elif 'dcopf' in prob_type:
+        filepath = os.path.join('datasets', 'dcopf', prob_type+"_data")
+        with open(filepath, 'rb') as f:
+            dataset = pickle.load(f)
+        data = DcopfProblem(dataset)
     else:
         raise NotImplementedError
 
-    if prob_type != 'convex_qcqp':
+    if prob_type not in ['convex_qcqp'] and 'dcopf' not in prob_type:
         with open(filepath, 'rb') as f:
             data = pickle.load(f)
     for attr in dir(data):
@@ -107,6 +113,8 @@ def main():
         solvers = ['ipopt']
     elif prob_type == 'convex_qcqp':
         solvers = ['cvxpy']
+    elif 'dcopf' in prob_type:
+        solvers = ['osqp', 'gurobi']
     else:
         solvers = ['pypower']
 
