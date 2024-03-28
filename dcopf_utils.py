@@ -20,6 +20,9 @@ from pypower.api import case57, case39, case118, case300
 from pypower.api import opf, makeYbus, ext2int
 from pypower import idx_bus, idx_gen, ppoption
 
+import gurobipy as gp
+from gurobipy import Model, GRB, QuadExpr, LinExpr
+
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
@@ -90,7 +93,7 @@ class DcopfProblem:
         self._device = None
 
     def __str__(self):
-        return 'SimpleProblem-{}-{}-{}-{}'.format(
+        return 'DcopfProblem-{}-{}-{}-{}'.format(
             str(self.ydim), str(self.nineq), str(self.neq), str(self.num)
         )
 
@@ -231,10 +234,30 @@ class DcopfProblem:
                     Y.append(results.x)
                 else:
                     Y.append(np.ones(self.ydim) * np.nan)
-
             sols = np.array(Y)
             parallel_time = total_time/len(X_np)
-
+        elif solver_type == 'gurobi':
+            print('running gurobi')
+            Q, p, A, G, h = \
+                self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np
+            X_np = X.detach().cpu().numpy()
+            lb = self.Lb.detach().cpu().numpy()
+            ub = self.Ub.detach().cpu().numpy()
+            Y = []
+            total_time = 0
+            for i, Xi in enumerate(X_np):
+                model = build_gurobi_model(Q, p, A, Xi, G, h, lb, ub)
+                start_time = time.time()
+                model.optimize()
+                end_time = time.time()
+                total_time += (end_time - start_time)
+                if model.status == GRB.OPTIMAL:
+                    sol = np.array([var.x for var in model.getVars()])
+                    Y.append(sol)
+                else:
+                    Y.append(np.ones(self.ydim) * np.nan)
+            sols = np.array(Y)
+            parallel_time = total_time/len(X_np)
         else:
             raise NotImplementedError
 
@@ -247,3 +270,42 @@ class DcopfProblem:
         self._X = self._X[feas_mask]
         self._Y = torch.tensor(Y[feas_mask])
         return Y
+
+
+def build_gurobi_model(Q, p, A, x, G, h, lb, ub):
+    model = Model("qp")
+    model.setParam('OutputFlag', 0)
+    model.setParam('FeasibilityTol', 1e-4)
+
+    n_vars = Q.shape[0]
+    vars = []
+    for i in range(n_vars):
+        vars.append(model.addVar(lb=lb[i], ub=ub[i], vtype=GRB.CONTINUOUS, name=f"x_{i}"))
+
+    obj = QuadExpr()
+    for i in range(n_vars):
+        for j in range(n_vars):
+            if Q[i, j] != 0:
+                obj.add(vars[i] * vars[j] * Q[i, j]* 0.5)
+
+    for i in range(n_vars):
+        if p[i] != 0:
+            obj.add(vars[i] * p[i])
+
+    model.setObjective(obj, GRB.MINIMIZE)
+
+    for i in range(A.shape[0]):
+        expr = LinExpr()
+        for j in range(n_vars):
+            if A[i, j] != 0:
+                expr.add(vars[j] * A[i, j])
+        model.addConstr(expr == x[i])
+    
+    for i in range(G.shape[0]):
+        expr = LinExpr()
+        for j in range(n_vars):
+            if G[i, j] != 0:
+                expr.add(vars[j] * G[i, j])
+        model.addConstr(expr <= h[i])
+    
+    return model
