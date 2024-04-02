@@ -23,12 +23,13 @@ import argparse
 from utils import my_hash, str_to_bool
 from qcqp_utils import QCQPProbem
 import default_args
+from model_utils import NNSolver_DC3 as NNSolver
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='convex_qcqp',
+    parser.add_argument('--probType', type=str, default='simple',
                         help='problem type')
         # choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
@@ -384,42 +385,6 @@ def grad_steps_all(data, X, Y, args):
     else:
         return Y, 0
 
-
-######### Models
-
-class NNSolver(nn.Module):
-    def __init__(self, data, args):
-        super().__init__()
-        self._data = data
-        self._args = args
-        layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
-        layers = reduce(operator.add,
-            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
-                for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-        
-        output_dim = data.ydim - data.nknowns
-
-        if self._args['useCompl']:
-            layers += [nn.Linear(layer_sizes[-1], output_dim - data.neq)]
-        else:
-            layers += [nn.Linear(layer_sizes[-1], output_dim)]
-
-        for layer in layers:
-            if type(layer) == nn.Linear:
-                nn.init.kaiming_normal_(layer.weight)
-
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x):
-        out = self.net(x)
- 
-        if self._args['useCompl']:
-            if 'acopf' in self._args['probType']:
-                out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-
-            return self._data.complete_partial(x, out)
-        else:
-            return self._data.process_output(x, out)
 
 if __name__=='__main__':
     main()

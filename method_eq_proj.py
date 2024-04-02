@@ -1,9 +1,3 @@
-# try:
-#     import waitGPU
-#     waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
-# except ImportError:
-#     pass
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -24,12 +18,13 @@ from utils import my_hash, str_to_bool
 from qcqp_utils import QCQPProbem
 from dcopf_utils import DcopfProblem
 import default_args
+from model_utils import NNSolver_eq_proj as NNSolver
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='method_eq_proj')
-    parser.add_argument('--probType', type=str, default='dcopf200', help='problem type')
+    parser.add_argument('--probType', type=str, default='simple', help='problem type')
         # choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp', 'dcopf']
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -133,7 +128,6 @@ def main():
     solver_net, stats = train_net(data, args, save_dir)
 
 
-
 def train_net(data, args, save_dir):
     print(save_dir)
     solver_step = args['lr']
@@ -178,10 +172,12 @@ def train_net(data, args, save_dir):
             Yhat_train = solver_net(Xtrain)
             Ystar = data.projection(Xtrain, Yhat_train)
             if i < 100:
-                train_loss = softloss(data, Xtrain, Yhat_train, args)
+                # train_loss = softloss(data, Xtrain, Yhat_train, args)
+                train_loss = projloss(data, Xtrain, Yhat_train, Ystar, args)
             else:
                 train_loss = softloss(data, Xtrain, Ystar, args)
             train_loss.sum().backward()
+            # train_loss.mean().backward()
             solver_opt.step()
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
@@ -293,51 +289,15 @@ def softloss(data, X, Y, args):
     obj_cost = data.obj_fn(Y)
     ineq_cost = torch.norm(data.ineq_dist(X, Y), dim=1)
     eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
-    # return obj_cost + 2 * ineq_cost
+    # return obj_cost + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
     # dcopf_200 1e-3, 1000, 0.5
-    return obj_cost*1e-4 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
+    return obj_cost*1e-2 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost #dcopf200
+    # return args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
 
-######### Models
-
-class NNSolver(nn.Module):
-    def __init__(self, data, args):
-        super().__init__()
-        self._data = data
-        self._args = args
-        layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
-        layers = reduce(operator.add, 
-            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)] 
-                for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-        layers += [nn.Linear(layer_sizes[-1], data.ydim)]
-        for layer in layers:
-            if type(layer) == nn.Linear:
-                nn.init.kaiming_normal_(layer.weight)
-
-        self.net = nn.Sequential(*layers)
-        
-    def forward(self, x):
-        prob_type = self._args['probType']
-        if prob_type == 'simple':
-            return self.net(x)
-        elif prob_type == 'nonconvex':
-            return self.net(x)
-        elif prob_type == 'convex_qcqp':
-            return self.net(x)
-        elif 'acopf' in prob_type:
-            out = self.net(x)
-            data = self._data
-            out2 = nn.Sigmoid()(out[:, :-data.nbus])
-            pg = out2[:, :data.ng] * data.pmax + (1-out2[:, :data.ng]) * data.pmin
-            qg = out2[:, data.ng:2*data.ng] * data.qmax + (1-out2[:, data.ng:2*data.ng]) * data.qmin
-            vm = out2[:, 2*data.ng:] * data.vmax + (1- out2[:, 2*data.ng:]) * data.vmin
-            return torch.cat([pg, qg, vm, out[:, -data.nbus:]], dim=1)
-        elif 'dcopf' in prob_type:
-            out = self.net(x)
-            data = self._data
-            out[:, data.bounded_index] = nn.Sigmoid()(out[:, data.bounded_index]) * data.Ub[data.bounded_index] + (1 - nn.Sigmoid()(out[:, data.bounded_index])) * data.Lb[data.bounded_index]
-            return out
-        else:
-            raise NotImplementedError
+def projloss(data, X, Yhat, Ystar, args):
+    ineq_cost = torch.norm(data.ineq_dist(X, Yhat), dim=1)
+    proj_cost = torch.norm(Yhat - Ystar, dim=1)
+    return ineq_cost + proj_cost
 
 
 if __name__=='__main__':

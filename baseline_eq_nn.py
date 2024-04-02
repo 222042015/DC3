@@ -1,8 +1,8 @@
-try:
-    import waitGPU
-    waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
-except ImportError:
-    pass
+# try:
+#     import waitGPU
+#     waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
+# except ImportError:
+#     pass
 
 import torch
 import torch.nn as nn
@@ -23,12 +23,13 @@ import argparse
 from utils import my_hash, str_to_bool
 from utils import PFFunction
 import default_args
+from model_utils import NNSolver_baseline_eq_nn as NNSolver
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='baseline_eq_nn')
-    parser.add_argument('--probType', type=str, default='acopf57',
+    parser.add_argument('--probType', type=str, default='simple',
         choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -309,49 +310,6 @@ def grad_steps_all(data, X, Y, args):
         return Y_new, i
     else:
         return Y, 0
-
-
-######### Models
-
-class NNSolver(nn.Module):
-    def __init__(self, data, args):
-        super().__init__()
-        self._data = data
-        self._args = args
-        layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
-        layers = reduce(operator.add,
-            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
-                for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-        layers += [nn.Linear(layer_sizes[-1], data.ydim - data.nknowns - data.neq)]
-        if 'acopf' in self._args['probType']:
-            layers += [nn.Sigmoid()]
-
-        for layer in layers:
-            if type(layer) == nn.Linear:
-                nn.init.kaiming_normal_(layer.weight)
-
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x):
-        prob_type = self._args['probType']
-        if prob_type in ['simple', 'nonconvex']:
-            return self.net(x)
-        elif 'acopf' in prob_type:
-            Z = self.net(x)
-            data = self._data
-
-            Z_scaled = torch.zeros(Z.shape, device=DEVICE)
-
-            # Re-scale real powers
-            Z_scaled[:, data.pg_pv_zidx] = Z[:, data.pg_pv_zidx] * data.pmax[1:] + \
-                 (1-Z[:, data.pg_pv_zidx]) * data.pmin[1:]
-            
-            # Re-scale voltage magnitudes
-            Z_scaled[:, data.vm_spv_zidx] = Z[:, data.vm_spv_zidx] * data.vmax[data.spv] + \
-                (1-Z[:, data.vm_spv_zidx]) * data.vmin[data.spv]
-
-            return Z_scaled
-
 
 if __name__=='__main__':
     main()
