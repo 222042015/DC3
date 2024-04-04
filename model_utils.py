@@ -16,7 +16,8 @@ class NNSolver_eq_proj(nn.Module):
         super().__init__()
         self._data = data
         self._args = args
-        layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
+        # layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
+        layer_sizes = [data.xdim, 1024, self._args['hiddenSize'], self._args['hiddenSize']]
         layers = reduce(operator.add, 
             [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)] 
                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])

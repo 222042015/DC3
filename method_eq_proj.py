@@ -24,7 +24,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='method_eq_proj')
-    parser.add_argument('--probType', type=str, default='simple', help='problem type')
+    parser.add_argument('--probType', type=str, default='dcopf3970', help='problem type')
         # choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp', 'dcopf']
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -100,7 +100,9 @@ def main():
         filepath = os.path.join('datasets', 'dcopf', prob_type+"_data")
         with open(filepath, 'rb') as f:
             dataset = pickle.load(f)
-        data = DcopfProblem(dataset)
+        start_time = time.time()
+        data = DcopfProblem(dataset, valid_frac=0.0833, test_frac=0.001)
+        print("Data load time: {:.4f}".format(time.time() - start_time))
     else:
         raise NotImplementedError
     
@@ -145,7 +147,7 @@ def train_net(data, args, save_dir):
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
-    scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=100, gamma=0.95)
+    scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=500, gamma=0.95)
 
     stats = {}
     for i in range(nepochs):
@@ -172,8 +174,8 @@ def train_net(data, args, save_dir):
             Yhat_train = solver_net(Xtrain)
             Ystar = data.projection(Xtrain, Yhat_train)
             if i < 100:
-                # train_loss = softloss(data, Xtrain, Yhat_train, args)
-                train_loss = projloss(data, Xtrain, Yhat_train, Ystar, args)
+                train_loss = softloss(data, Xtrain, Yhat_train, args)
+                # train_loss = projloss(data, Xtrain, Yhat_train, Ystar, args)
             else:
                 train_loss = softloss(data, Xtrain, Ystar, args)
             train_loss.sum().backward()
@@ -291,7 +293,7 @@ def softloss(data, X, Y, args):
     eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
     # return obj_cost + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
     # dcopf_200 1e-3, 1000, 0.5
-    return obj_cost*1e-2 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost #dcopf200
+    return obj_cost*5e-5 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost #dcopf200
     # return args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
 
 def projloss(data, X, Yhat, Ystar, args):
