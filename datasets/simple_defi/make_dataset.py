@@ -42,7 +42,7 @@ for num_eq in num_eq_list:
         coefficients = np.random.random(num_eq - 1)
         A[:, i] = np.dot(A[:, :num_eq - 1], coefficients)
 
-    problem = SimpleProblem(Q, p, A, G, h, X)
+    problem = SimpleProblem(Q, p, A, G, h, X, test_frac=0.001)
     problem.calc_Y()
     print(len(problem.Y))
 

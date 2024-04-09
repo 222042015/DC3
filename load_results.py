@@ -18,23 +18,26 @@ def main():
 def get_experiment_dirs(path_prefix):
     exper_dirs = {}
 
-    # eq = 50
-    # for ineq in [10, 30, 50, 70, 90]:
-    #     exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
+    eq = 50
+    for ineq in [10, 30, 50, 70, 90]:
+        exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
         
-    # ineq = 50
-    # for eq in [10, 30, 70, 90]:
-    #     exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
+    ineq = 50
+    for eq in [10, 30, 70, 90]:
+        exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
         
     # exper_dirs['nonconvex'] = 'NonconvexProblem-100-50-50-10000'
 
     # exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
 
-    # exper_dirs['nonconvex'] = 'NonconvexProblem-200-100-100-10000_bak'
-    # exper_dirs['simple_ineq100_eq100'] = 'SimpleProblem-200-100-100-10000_bak'
-    # exper_dirs['simple_ineq50_eq50'] = 'SimpleProblem-100-50-50-9000'
+    exper_dirs['nonconvex'] = 'NonconvexProblem-200-100-100-10000_bak'
+    exper_dirs['simple_ineq100_eq100'] = 'SimpleProblem-200-100-100-10000'
+    # exper_dirs['simple_ineq50_eq50'] = 'SimpleProblem-100-50-50-9000' # defi
+    exper_dirs['simple_ineq50_eq50'] = 'SimpleProblem-100-50-50-10000_bak' 
     # exper_dirs['qcqp'] = 'QCQPProblem-100-50-50-10000'
-    exper_dirs['dcopf'] = 'DcopfProblem-484-490-446-10000'
+    # exper_dirs['dcopf'] = 'DcopfProblem-483-490-446-10000'
+    exper_dirs['dcopf'] = 'DcopfProblem-10994-11424-10612-10000_0.3'
+    exper_dirs['simple_ineq500_eq500'] = 'SimpleProblem-1000-500-500-10000' 
 
     for key in exper_dirs.keys():
         exper_dirs[key] = os.path.join(path_prefix, exper_dirs[key])
@@ -48,7 +51,7 @@ def get_status_results(exper_dirs):
     all_stats = {}
 
     opt_methods = dict([
-            ('simple', ['osqp', 'qpth']), ('nonconvex', ['ipopt']), ('acopf', ['pypower']), ('qcqp', ['cvxpy']), ('dcopf', ['osqp', 'gurobi'])
+            ('simple', ['osqp', 'qpth']), ('nonconvex', ['ipopt']), ('acopf', ['pypower']), ('qcqp', ['cvxpy']), ('dcopf', ['gurobi', 'osqp'])
     ])
     nn_baseline_dirs = [('baseline_nn', 'baselineNN'), ('baseline_eq_nn', 'baselineEqNN')]
 

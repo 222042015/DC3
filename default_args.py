@@ -3,7 +3,7 @@ def baseline_opt_default_args(prob_type):
     defaults['simpleVar'] = 100
     defaults['simpleIneq'] = 50
     defaults['simpleEq'] = 50
-    defaults['simpleEx'] = 9000
+    defaults['simpleEx'] = 10000
 
     defaults['nonconvexVar'] = 100
     defaults['nonconvexIneq'] = 50
@@ -28,10 +28,10 @@ def baseline_opt_default_args(prob_type):
 
 def baseline_nn_default_args(prob_type):
     defaults = {}
-    defaults['simpleVar'] = 200
-    defaults['simpleIneq'] = 100
-    defaults['simpleEq'] = 100
-    defaults['simpleEx'] = 10000
+    defaults['simpleVar'] = 100
+    defaults['simpleIneq'] = 50
+    defaults['simpleEq'] = 50
+    defaults['simpleEx'] = 9000
     defaults['nonconvexVar'] = 200
     defaults['nonconvexIneq'] = 100
     defaults['nonconvexEq'] = 100
@@ -46,7 +46,7 @@ def baseline_nn_default_args(prob_type):
         defaults['hiddenSize'] = 200
         defaults['softWeight'] = 100
         defaults['softWeightEqFrac'] = 0.5
-        defaults['useTestCorr'] = True
+        defaults['useTestCorr'] = False
         defaults['corrTestMaxSteps'] = 10
         defaults['corrEps'] = 1e-4
         defaults['corrLr'] = 1e-7
@@ -82,10 +82,10 @@ def baseline_nn_default_args(prob_type):
 
 def baseline_eq_nn_default_args(prob_type):
     defaults = {}
-    defaults['simpleVar'] = 200
-    defaults['simpleIneq'] = 100
-    defaults['simpleEq'] = 100
-    defaults['simpleEx'] = 10000
+    defaults['simpleVar'] = 100
+    defaults['simpleIneq'] = 50
+    defaults['simpleEq'] = 50
+    defaults['simpleEx'] = 9000
     defaults['nonconvexVar'] = 200
     defaults['nonconvexIneq'] = 100
     defaults['nonconvexEq'] = 100
@@ -159,7 +159,7 @@ def method_default_args(prob_type):
         defaults['batchSize'] = 200
         defaults['lr'] = 1e-4
         defaults['hiddenSize'] = 200
-        defaults['softWeight'] = 10          # use 100 if useCompl=False
+        defaults['softWeight'] = 10         # use 100 if useCompl=False
         defaults['softWeightEqFrac'] = 0.5
         defaults['useCompl'] = True
         defaults['useTrainCorr'] = True
@@ -354,10 +354,11 @@ def method_eq_proj_default_args(prob_type):
     if prob_type == 'simple':
         defaults['epochs'] = 1000
         defaults['batchSize'] = 200
-        defaults['lr'] = 5e-4
+        defaults['lr'] = 1e-4
         defaults['hiddenSize'] = 200
-        defaults['softWeight'] = 100
+        defaults['softWeight'] = 10 
         defaults['softWeightEqFrac'] = 0.5
+        defaults['softWeightObj'] = 1.0
     elif prob_type == 'nonconvex':
         defaults['epochs'] = 1000
         defaults['batchSize'] = 200
@@ -365,6 +366,7 @@ def method_eq_proj_default_args(prob_type):
         defaults['hiddenSize'] = 200
         defaults['softWeight'] = 100
         defaults['softWeightEqFrac'] = 0.5
+        defaults['softWeightObj'] = 1
     elif 'acopf' in prob_type:
         defaults['epochs'] = 1000
         defaults['batchSize'] = 200
@@ -379,15 +381,17 @@ def method_eq_proj_default_args(prob_type):
         defaults['hiddenSize'] = 200
         defaults['softWeight'] = 100
         defaults['softWeightEqFrac'] = 0.5
+        defaults['softWeightObj'] = 1
     elif 'dcopf' in prob_type:
         nbus = int(prob_type[5:])
         # hiddenSize_dict = {200: 300, 2000: 500, 10000: 1000}
-        defaults['epochs'] = 3000
+        defaults['epochs'] = 2000
         defaults['batchSize'] = 200
         defaults['lr'] = 3e-4
         defaults['hiddenSize'] = 3072 #hiddenSize_dict[nbus]
         defaults['softWeight'] = 2000
         defaults['softWeightEqFrac'] = 0.5
+        defaults['softWeightObj'] = 1
     else:
         raise NotImplementedError
 

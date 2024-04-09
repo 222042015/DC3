@@ -13,13 +13,14 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 torch.set_default_dtype(torch.float64)
 
 num_var = 100
-num_ineq = 50
-num_eq = 50
+num_ineq = 100
+num_eq_list = [100]
 num_examples = 10000
 
 
 num_ineq = 50
 for num_eq in [10, 30, 50, 70, 90]:
+# for num_eq in num_eq_list:
     print(num_ineq, num_eq)
     np.random.seed(17)
     Q = np.diag(np.random.random(num_var))
@@ -29,7 +30,7 @@ for num_eq in [10, 30, 50, 70, 90]:
     G = np.random.normal(loc=0, scale=1., size=(num_ineq, num_var))
     h = np.sum(np.abs(G@np.linalg.pinv(A)), axis=1)
 
-    problem = SimpleProblem(Q, p, A, G, h, X)
+    problem = SimpleProblem(Q, p, A, G, h, X, test_frac=0.001)
     problem.calc_Y()
     print(len(problem.Y))
 
@@ -47,7 +48,7 @@ for num_ineq in [10, 30, 70, 90]:
     G = np.random.normal(loc=0, scale=1., size=(num_ineq, num_var))
     h = np.sum(np.abs(G@np.linalg.pinv(A)), axis=1)
 
-    problem = SimpleProblem(Q, p, A, G, h, X)
+    problem = SimpleProblem(Q, p, A, G, h, X, test_frac=0.001)
     problem.calc_Y()
     print(len(problem.Y))
 

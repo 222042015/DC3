@@ -75,6 +75,9 @@ class SimpleProblem:
             self._A_partial = self._A[:, self._partial_vars]
             self._A_other_inv = torch.inverse(self._A[:, self._other_vars])
 
+        AtA_inv = torch.inverse(self.A @ self.A.T)
+        self.At_AtA_inv = self.A.T@AtA_inv
+
         ### For Pytorch
         self._device = None
 
@@ -214,6 +217,11 @@ class SimpleProblem:
     @property
     def device(self):
         return self._device
+
+    def projection(self, X, Y):
+        res = Y@self.A.T - X
+        Y_star = Y - (self.At_AtA_inv @ res.unsqueeze(-1)).squeeze(-1)
+        return Y_star
 
     def obj_fn(self, Y):
         return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)

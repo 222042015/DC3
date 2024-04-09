@@ -29,7 +29,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='baseline_opt')
-    parser.add_argument('--probType', type=str, default='dcopf200', help='problem type')
+    parser.add_argument('--probType', type=str, default='simple', help='problem type')
         # choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp', 'dcopf']
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -89,7 +89,7 @@ def main():
         filepath = os.path.join('datasets', 'dcopf', prob_type+"_data")
         with open(filepath, 'rb') as f:
             dataset = pickle.load(f)
-        data = DcopfProblem(dataset)
+        data = DcopfProblem(dataset, valid_frac=0.001, test_frac=0.001)
     else:
         raise NotImplementedError
 
@@ -114,7 +114,7 @@ def main():
     elif prob_type == 'convex_qcqp':
         solvers = ['cvxpy']
     elif 'dcopf' in prob_type:
-        solvers = ['osqp', 'gurobi']
+        solvers = ['gurobi', 'osqp']
     else:
         solvers = ['pypower']
 

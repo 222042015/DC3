@@ -51,6 +51,7 @@ class DcopfProblem:
                    l <= y <= u
     """
     # def __init__(self, Q, p, A, G, h, X, Lb, Ub, valid_frac=0.0833, test_frac=0.0833):
+    # def __init__(self, dataset, valid_frac=0.0833, test_frac=0.0833):
     def __init__(self, dataset, valid_frac=0.0833, test_frac=0.0833):
         A = np.array(dataset['A'])
         X = np.array(dataset['X'])
@@ -84,6 +85,8 @@ class DcopfProblem:
         self.lb_index = lb_index
         self.ub_index = ub_index
         self.bounded_index = np.intersect1d(lb_index, ub_index)
+        self.ub_only_index = np.setdiff1d(ub_index, self.bounded_index)
+        self.lb_only_index = np.setdiff1d(lb_index, self.bounded_index)
 
         AtA_inv = torch.inverse(self.A @ self.A.T)
         self.At_AtA_inv = self.A.T@AtA_inv
@@ -159,14 +162,17 @@ class DcopfProblem:
         return Y_star
 
     def obj_fn(self, Y):
-        return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)
-        # return ((Y@self.Q)*Y + self.p*Y).sum(dim=1)
+        # return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)
+        return ((Y@self.Q)*Y + self.p*Y).sum(dim=1)
 
     def eq_resid(self, X, Y):
         return X - Y@self.A.T
 
     def ineq_resid(self, X, Y):
-        ineq = Y@self.G.T - self.h
+        if self.G.shape[0] > 0:
+            ineq = Y@self.G.T - self.h
+        else:
+            ineq = torch.tensor([], device=DEVICE)
         # lb_violation = torch.maximum(torch.zeros(self.ydim), self.Lb - Y)
 
         # Upper bound violation: max(0, y - ub)
@@ -182,7 +188,8 @@ class DcopfProblem:
         return torch.clamp(resids, 0)
 
     def eq_grad(self, X, Y):
-        return 0.5*(Y@self.A.T - X)@self.A
+        # return 0.5*(Y@self.A.T - X)@self.A
+        return (Y@self.A.T - X)@self.A
 
     def ineq_grad(self, X, Y):
         ineq_dist = self.ineq_dist(X, Y)
@@ -209,7 +216,7 @@ class DcopfProblem:
         Y[:, self.other_vars] = (X - Z @ self._A_partial.T) @ self._A_other_inv.T
         return Y
 
-    def opt_solve(self, X, solver_type='osqp', tol=1e-4):
+    def opt_solve(self, X, solver_type='gurobi', tol=1e-4):
         if solver_type == 'osqp':
             print('running osqp')
             Q, p, A, G, h = \
@@ -256,6 +263,9 @@ class DcopfProblem:
                     Y.append(sol)
                 else:
                     Y.append(np.ones(self.ydim) * np.nan)
+                
+                if i % 5 == 0:
+                    print(i)
             sols = np.array(Y)
             parallel_time = total_time/len(X_np)
         else:
@@ -286,7 +296,8 @@ def build_gurobi_model(Q, p, A, x, G, h, lb, ub):
     for i in range(n_vars):
         for j in range(n_vars):
             if Q[i, j] != 0:
-                obj.add(vars[i] * vars[j] * Q[i, j]* 0.5)
+                # obj.add(vars[i] * vars[j] * Q[i, j]* 0.5)
+                obj.add(vars[i] * vars[j] * Q[i, j])
 
     for i in range(n_vars):
         if p[i] != 0:

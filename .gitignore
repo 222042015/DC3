@@ -13,7 +13,7 @@
 
 results/
 logs/
-results/
+results copy/
 test/
 wandb/
 datasets/acopf/acopf118_dataset
@@ -21,3 +21,5 @@ datasets/acopf/matlab_datasets/FeasiblePairs_Case118.mat
 
 datasets/acopf/case
 datasets/acopf/matlab_datasets/*.m~
+# datasets/dcopf/
+datasets/qplib/*.lp

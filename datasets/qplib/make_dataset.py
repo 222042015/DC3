@@ -25,8 +25,8 @@ from dcopf_utils import DcopfProblem
 
 # %%
 # qp_path = ''
-nbus = 8906
-m = gp.read('/home/jxxiong/A-xjx/DC3/datasets/qplib/QPLIB_8906.lp')
+nbus = 9002
+m = gp.read(f'/home/jxxiong/A-xjx/DC3/datasets/qplib/QPLIB_{nbus}.lp')
 n_samples = 10000
 perturb_rate = 0.3
 
@@ -162,7 +162,7 @@ X = []
 Y = []
 solve_time = []
 for i in range(n_samples):
-    print(i)
+    print(f"{len(X)} / {i}")
     x = perturb_eq_rhs(b)
     model = build_gurobi_model(Q, p, A, x, G, h, Lb, Ub)
     start_time = time.time()

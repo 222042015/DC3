@@ -24,7 +24,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='method_eq_proj')
-    parser.add_argument('--probType', type=str, default='dcopf3970', help='problem type')
+    parser.add_argument('--probType', type=str, default='simple', help='problem type')
         # choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp', 'dcopf']
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -60,6 +60,8 @@ def main():
         help='hidden layer size for neural network')
     parser.add_argument('--corrEps', type=float,
         help='correction procedure tolerance')
+    parser.add_argument('--softWeightObj', type=float,
+        help='total weight given to the objective in loss')
     parser.add_argument('--softWeight', type=float,
         help='total weight given to constraint violations in loss')
     parser.add_argument('--softWeightEqFrac', type=float,
@@ -291,9 +293,9 @@ def softloss(data, X, Y, args):
     obj_cost = data.obj_fn(Y)
     ineq_cost = torch.norm(data.ineq_dist(X, Y), dim=1)
     eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
-    # return obj_cost + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
+    return obj_cost * args['softWeightObj'] + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
     # dcopf_200 1e-3, 1000, 0.5
-    return obj_cost*5e-5 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost #dcopf200
+    # return obj_cost*5e-5 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost #dcopf3970
     # return args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
 
 def projloss(data, X, Yhat, Ystar, args):

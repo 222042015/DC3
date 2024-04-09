@@ -192,49 +192,5 @@ def eval_net_cpu(data, X, solver_net, args, prefix, stats):
     return stats
 
 
-# class NNSolver(nn.Module):
-#     def __init__(self, data, args):
-#         super().__init__()
-#         self._data = data
-#         self._args = args
-#         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
-#         layers = reduce(operator.add, 
-#             [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)] 
-#                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
-#         layers += [nn.Linear(layer_sizes[-1], data.ydim)]
-#         for layer in layers:
-#             if type(layer) == nn.Linear:
-#                 nn.init.kaiming_normal_(layer.weight)
-
-#         self.net = nn.Sequential(*layers)
-        
-#     def forward(self, x):
-#         prob_type = self._args['probType']
-#         if prob_type == 'simple':
-#             return self.net(x)
-#         elif prob_type == 'nonconvex':
-#             return self.net(x)
-#         elif prob_type == 'convex_qcqp':
-#             return self.net(x)
-#         elif 'acopf' in prob_type:
-#             out = self.net(x)
-#             data = self._data
-#             out2 = nn.Sigmoid()(out[:, :-data.nbus])
-#             pg = out2[:, :data.ng] * data.pmax + (1-out2[:, :data.ng]) * data.pmin
-#             qg = out2[:, data.ng:2*data.ng] * data.qmax + (1-out2[:, data.ng:2*data.ng]) * data.qmin
-#             vm = out2[:, 2*data.ng:] * data.vmax + (1- out2[:, 2*data.ng:]) * data.vmin
-#             return torch.cat([pg, qg, vm, out[:, -data.nbus:]], dim=1)
-#         elif 'dcopf' in prob_type:
-#             out = self.net(x)
-#             data = self._data
-#             out[:, data.bounded_index] = nn.functional.sigmoid((out[:, data.bounded_index])) * data.Ub[data.bounded_index] + (1 - nn.functional.sigmoid((out[:, data.bounded_index]))) * data.Lb[data.bounded_index]
-#             out[:, data.ub_only_index] = -nn.functional.relu(out[:, data.ub_only_index]) + data.Ub[data.ub_only_index] 
-#             # out[:, data.lb_only_index] = nn.functional.relu(out[:, data.lb_only_index] - self.Lb[data.lb_only_index]) + self.Lb[data.lb_only_index]
-#             out[:, data.lb_only_index] = nn.functional.relu(out[:, data.lb_only_index]) + data.Lb[data.lb_only_index]
-
-#             return out
-#         else:
-#             raise NotImplementedError
-
 if __name__ == "__main__":
     main()
