@@ -85,9 +85,6 @@ class SimpleProblem:
         ### For Pytorch
         self._device = None
 
-        self.lambdas = self.solve_lambda()
-        self.lambdas_inv = torch.clamp(1/self.lambdas, max=1e3)
-
     def __str__(self):
         return 'SimpleProblem-{}-{}-{}-{}'.format(
             str(self.ydim), str(self.nineq), str(self.neq), str(self.num)
@@ -224,35 +221,6 @@ class SimpleProblem:
     @property
     def device(self):
         return self._device
-    
-    def solve_lambda(self):
-        m = Model()
-
-        # Number of constraints (rows in G)
-        n_constr = self.G.shape[0]
-
-        # Define lambda variables for the dual problem
-        lambdas = m.addVars(n_constr, lb=0, name="lambdas")
-
-        Q_inv = np.linalg.inv(self.Q_np)
-        Q_inv_Gt = Q_inv @ self.G_np.T  # This is n x n @ n x m resulting in n x m
-        G_Q_int_Gt = self.G_np @ Q_inv_Gt  # m x n @ n x m resulting in m x m
-        p_Q_inv_Gt = self.p_np @ Q_inv_Gt  # n x 1 @ n x m resulting in 1 x m
-
-        obj1 = -gurobipy.quicksum(lambdas[i] * p_Q_inv_Gt[i] for i in range(n_constr))
-        obj2 = -0.5 * gurobipy.quicksum(lambdas[i] * G_Q_int_Gt[i, j] * lambdas[j] for i in range(n_constr) for j in range(n_constr))
-        obj3 = -gurobipy.quicksum(lambdas[i] * self.h_np[i] for i in range(n_constr))
-        obj = obj1 + obj2 + obj3 
-
-        m.setObjective(obj, GRB.MAXIMIZE)  # Maximize the dual objective
-
-        # Optimize the model
-        m.optimize()
-
-        # Retrieve the optimal values for lambda
-        lambda_optimal = np.array([lambdas[i].X for i in range(n_constr)])
-
-        return torch.tensor(lambda_optimal, dtype=torch.get_default_dtype(), device=self.device)
 
     def projection(self, X, Y):
         res = Y@self.A.T - X
