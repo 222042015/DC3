@@ -20,9 +20,9 @@ from pypower.api import case57, case39, case118, case300
 from pypower.api import opf, makeYbus, ext2int
 from pypower import idx_bus, idx_gen, ppoption
 
-from gurobipy import Model, GRB
 import numpy as np
-import gurobipy
+import gurobipy as gp
+from gurobipy import Model, GRB, QuadExpr, LinExpr
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -51,18 +51,26 @@ class SimpleProblem:
                    Gy <= h
     """
     def __init__(self, Q, p, A, G, h, X, valid_frac=0.0833, test_frac=0.0833):
+        # self.active_index = np.array([1, 3, 4, 9, 11, 12, 13, 18, 20, 24, 29])
         self._Q = torch.tensor(Q)
         self._p = torch.tensor(p)
         self._A = torch.tensor(A)
         self._G = torch.tensor(G)
         self._h = torch.tensor(h)
         self._X = torch.tensor(X)
+
+        # self._A = torch.vstack([self._A, self.G[self.active_index]])
+        # self._X = torch.hstack([self._X, self.h[self.active_index].repeat(X.shape[0], 1)])
+        # self.remaining_index = np.setdiff1d(np.arange(self._G.shape[0]), self.active_index)
+        # self._G = self._G[self.remaining_index]
+        # self._h = self._h[self.remaining_index]
+        
         self._Y = None
-        self._xdim = X.shape[1]
-        self._ydim = Q.shape[0]
-        self._num = X.shape[0]
-        self._neq = A.shape[0]
-        self._nineq = G.shape[0]
+        self._xdim = self._X.shape[1]
+        self._ydim = self._Q.shape[0]
+        self._num = self._X.shape[0]
+        self._neq = self._A.shape[0]
+        self._nineq = self._G.shape[0]
         self._nknowns = 0
         self._valid_frac = valid_frac
         self._test_frac = test_frac
@@ -84,6 +92,9 @@ class SimpleProblem:
 
         ### For Pytorch
         self._device = None
+
+
+
 
     def __str__(self):
         return 'SimpleProblem-{}-{}-{}-{}'.format(
@@ -318,6 +329,75 @@ class SimpleProblem:
         self._Y = torch.tensor(Y[feas_mask])
         return Y
 
+    def get_dual(self, solver_type='gurobi', tol=1e-4):   
+        if solver_type == 'gurobi':
+            print('running gurobi')
+            Q, p, A, G, h = \
+                self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np
+            X_np = self.X.detach().cpu().numpy()
+            eq_duals = []
+            ineq_duals = []
+            total_time = 0
+            for Xi in X_np:
+                model = build_gurobi_model(Q, p, A, Xi, G, h)
+                model.optimize()
+                optimal_val = model.objVal
+                optimal_x = np.array([v.x for v in model.getVars()])
+
+                # get the dual values
+                duals = np.array([c.Pi for c in model.getConstrs()])
+                eq_dual = duals[:A.shape[0]]
+                ineq_dual = duals[A.shape[0]:]
+                eq_duals.append(eq_dual)
+                ineq_duals.append(ineq_dual)
+
+            parallel_time = total_time/len(X_np)
+
+        else:
+            raise NotImplementedError
+
+        self.eq_duals = np.array(eq_duals)
+        self.ineq_duals = np.array(ineq_duals)
+    
+
+def build_gurobi_model(Q, p, A, x, G, h):
+    model = Model("qp")
+    model.setParam('OutputFlag', 0)
+    model.setParam('FeasibilityTol', 1e-4)
+    model.setParam('TimeLimit', 600)
+
+    n_vars = Q.shape[0]
+    vars = []
+    for i in range(n_vars):
+        vars.append(model.addVar(lb=-np.inf, ub=np.inf, vtype=GRB.CONTINUOUS, name=f"x_{i}"))
+
+    obj = QuadExpr()
+    for i in range(n_vars):
+        for j in range(n_vars):
+            if Q[i, j] != 0:
+                obj.add(vars[i] * vars[j] * Q[i, j]* 0.5)
+
+    for i in range(n_vars):
+        if p[i] != 0:
+            obj.add(vars[i] * p[i])
+
+    model.setObjective(obj, GRB.MINIMIZE)
+
+    for i in range(A.shape[0]):
+        expr = LinExpr()
+        for j in range(n_vars):
+            if A[i, j] != 0:
+                expr.add(vars[j] * A[i, j])
+        model.addConstr(expr == x[i])
+    
+    for i in range(G.shape[0]):
+        expr = LinExpr()
+        for j in range(n_vars):
+            if G[i, j] != 0:
+                expr.add(vars[j] * G[i, j])
+        model.addConstr(expr <= h[i])
+    
+    return model
 
 ###################################################################
 # NONCONVEX PROBLEM
