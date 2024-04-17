@@ -151,6 +151,8 @@ def train_net(data, args, save_dir):
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
     scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=500, gamma=0.95)
 
+    args['factor'] = 5
+
     stats = {}
     for i in range(nepochs):
         epoch_stats = {}
@@ -176,8 +178,10 @@ def train_net(data, args, save_dir):
             Yhat_train = solver_net(Xtrain)
             Ystar = data.projection(Xtrain, Yhat_train)
             if i < 100:
-                train_loss = softloss(data, Xtrain, Yhat_train, args)
+                train_loss = softloss1(data, Xtrain, Yhat_train, args)
                 # train_loss = projloss(data, Xtrain, Yhat_train, Ystar, args)
+            elif i < 200:
+                train_loss = softloss(data, Xtrain, Ystar, args)
             else:
                 train_loss = softloss(data, Xtrain, Ystar, args)
             train_loss.sum().backward()
@@ -186,7 +190,6 @@ def train_net(data, args, save_dir):
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
-        # print('train ineq max {:.4f}'.format(data.ineq_dist(Xtrain, Yhat_train).max().detach().cpu().numpy()))
 
         scheduler.step()
 
@@ -198,21 +201,25 @@ def train_net(data, args, save_dir):
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
                 np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
 
-        if args['saveAllStats']:
-            if i == 0:
-                for key in epoch_stats.keys():
-                    stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
-            else:
-                for key in epoch_stats.keys():
-                    stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
-        else:
-            stats = epoch_stats
+        if i % 50 == 0 and i > 100:
+            args['factor'] = min(5000, args['factor'] * 1.5)
+            print('iteration {}: factor {}'.format(i, args['factor']))
 
-        if (i % args['resultsSaveFreq'] == 0):
-            with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
-                pickle.dump(stats, f)
-            with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
-                torch.save(solver_net.state_dict(), f)
+        # if args['saveAllStats']:
+        #     if i == 0:
+        #         for key in epoch_stats.keys():
+        #             stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
+        #     else:
+        #         for key in epoch_stats.keys():
+        #             stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
+        # else:
+        #     stats = epoch_stats
+
+        # if (i % args['resultsSaveFreq'] == 0):
+        #     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
+        #         pickle.dump(stats, f)
+        #     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
+        #         torch.save(solver_net.state_dict(), f)
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
         pickle.dump(stats, f)
@@ -289,19 +296,55 @@ def eval_net(data, X, solver_net, args, prefix, stats):
 
     return stats
 
-def softloss(data, X, Y, args):
+# def gelu(x, t=1000):
+#     return 500 * x * (1 + torch.tanh((x + t*x**3)))
+
+# def softloss(data, X, Y, args):
+#     t = args['factor']
+#     obj_cost = data.obj_fn(Y)
+#     # ineq_cost = torch.norm(data.ineq_dist(X, Y), dim=1)
+#     # ineq_cost = torch.sum(data.ineq_dist(X, Y), dim=1)
+#     # ineq_cost = torch.sum(nn.functional.gelu(data.ineq_resid(X, Y) * 10), dim=1)
+#     ineq_cost = torch.sum(gelu(data.ineq_resid(X, Y)), dim=1)
+#     eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
+#     return obj_cost + ineq_cost
+
+
+def softloss1(data, X, Y, args):
     obj_cost = data.obj_fn(Y)
-    ineq_cost = torch.norm(data.ineq_dist(X, Y), dim=1)
-    eq_cost = torch.norm(data.eq_resid(X, Y), dim=1)
+    ineq_cost = torch.norm(data.ineq_dist(X, Y), dim=1).sum(dim=0)
+    eq_cost = torch.norm(data.eq_resid(X, Y), dim=1).sum(dim=0)
     return obj_cost * args['softWeightObj'] + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
     # dcopf_200 1e-3, 1000, 0.5
-    # return obj_cost*5e-5 + args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost #dcopf3970
-    # return args['softWeight'] * (1 - args['softWeightEqFrac']) * ineq_cost
 
-def projloss(data, X, Yhat, Ystar, args):
-    ineq_cost = torch.norm(data.ineq_dist(X, Yhat), dim=1)
-    proj_cost = torch.norm(Yhat - Ystar, dim=1)
-    return ineq_cost + proj_cost
+
+
+def log_barrier_vectorized(z, t):
+    # Use torch.clamp instead of where to avoid redundant computations
+    if isinstance(t, (int, float)):
+        t = torch.tensor(t)
+    z_clamped = torch.clamp(z, -1 / t**2, float('inf'))
+    return torch.where(z <= -1 / t**2, -torch.log(-z) / t, t * z_clamped - torch.log(1 / (t**2)) / t + 1 / t)
+
+def softloss(data, X, Y, args):
+    t = args['factor']
+    obj_cost = data.obj_fn(Y).sum(dim=0)
+
+    ineq_resid = data.ineq_resid(X, Y)
+    # Vectorize log_barrier_vectorized function
+    ineq_resid_bar = log_barrier_vectorized(ineq_resid, t)
+    # Sum along the appropriate axis without creating a new tensor
+    ineq_resid_bar = ineq_resid_bar.sum(dim=1).sum(dim=0)
+
+    loss = torch.cat((ineq_resid_bar.unsqueeze(0), obj_cost.unsqueeze(0)))
+    return loss
+
+# def projloss(data, X, Yhat, Ystar, args):
+#     ineq_cost = torch.norm(data.ineq_dist(X, Yhat), dim=1) * 100
+#     proj_cost = torch.norm(Yhat - Ystar, dim=1)
+#     ineq_cost = torch.norm(data.ineq_dist(X, Ystar), dim=1) * 10
+#     return ineq_cost + proj_cost
+
 
 
 if __name__=='__main__':
