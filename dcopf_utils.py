@@ -163,7 +163,7 @@ class DcopfProblem:
 
     def obj_fn(self, Y):
         # return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)
-        return ((Y@self.Q)*Y + self.p*Y).sum(dim=1)
+        return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)
 
     def eq_resid(self, X, Y):
         return X - Y@self.A.T
@@ -296,8 +296,8 @@ def build_gurobi_model(Q, p, A, x, G, h, lb, ub):
     for i in range(n_vars):
         for j in range(n_vars):
             if Q[i, j] != 0:
-                # obj.add(vars[i] * vars[j] * Q[i, j]* 0.5)
-                obj.add(vars[i] * vars[j] * Q[i, j])
+                obj.add(vars[i] * vars[j] * Q[i, j]* 0.5)
+                # obj.add(vars[i] * vars[j] * Q[i, j])
 
     for i in range(n_vars):
         if p[i] != 0:

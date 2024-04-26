@@ -359,7 +359,6 @@ class SimpleProblem:
         self.eq_duals = np.array(eq_duals)
         self.ineq_duals = np.array(ineq_duals)
     
-
 def build_gurobi_model(Q, p, A, x, G, h):
     model = Model("qp")
     model.setParam('OutputFlag', 0)
@@ -399,6 +398,58 @@ def build_gurobi_model(Q, p, A, x, G, h):
     
     return model
 
+def build_gurobi_model_nonconvex(Q, p, A, x, G, h):
+    model = Model("nonconvex_qp")
+    model.setParam('OutputFlag', 0)
+    model.setParam('FeasibilityTol', 1e-4)
+    model.setParam('TimeLimit', 600)
+
+    n_vars = Q.shape[0]
+    vars = []
+    vars_theta = []
+    for i in range(n_vars):
+        vars.append(model.addVar(lb=-np.inf, ub=np.inf, vtype=GRB.CONTINUOUS, name=f"x_{i}"))
+        vars_theta.append(model.addVar(lb=-1.0, ub=1.0, vtype=GRB.CONTINUOUS, name=f"theta_{i}"))
+
+    for i in range(n_vars):
+        model.addGenConstrSin(vars[i], vars_theta[i], f"sin_{i}")
+        
+    obj = QuadExpr()
+    for i in range(n_vars):
+        for j in range(n_vars):
+            if Q[i, j] != 0:
+                obj.add(vars[i] * vars[j] * Q[i, j]* 0.5)
+
+    for i in range(n_vars):
+        if p[i] != 0:
+            obj.add(vars_theta[i] * p[i])
+    
+    model.setObjective(obj, GRB.MINIMIZE)
+
+    for i in range(A.shape[0]):
+        expr = LinExpr()
+        for j in range(n_vars):
+            if A[i, j] != 0:
+                expr.add(vars[j] * A[i, j])
+        model.addConstr(expr == x[i])
+    
+    for i in range(G.shape[0]):
+        expr = LinExpr()
+        for j in range(n_vars):
+            if G[i, j] != 0:
+                expr.add(vars[j] * G[i, j])
+        model.addConstr(expr <= h[i])
+    
+    return model
+
+def build_osqp(Q, p, A, Xi, G, h, tol=1e-4):
+    total_time = 0
+    solver = osqp.OSQP()
+    my_A = np.vstack([A, G])
+    my_l = np.hstack([Xi, -np.ones(h.shape[0]) * np.inf])
+    my_u = np.hstack([Xi, h])
+    solver.setup(P=csc_matrix(Q), q=p, A=csc_matrix(my_A), l=my_l, u=my_u, verbose=False, eps_prim_inf=tol)
+    return solver
 ###################################################################
 # NONCONVEX PROBLEM
 ###################################################################
@@ -440,6 +491,9 @@ class NonconvexProblem:
             self._M = 2 * (self.G[:, self.partial_vars] -
                             self.G[:, self.other_vars] @ (self._A_other_inv @ self._A_partial))
 
+        AtA_inv = torch.inverse(self.A @ self.A.T)
+        self.At_AtA_inv = self.A.T@AtA_inv
+        
         ### For Pytorch
         self._device = None
 
@@ -580,6 +634,11 @@ class NonconvexProblem:
     def device(self):
         return self._device
 
+    def projection(self, X, Y):
+        res = Y@self.A.T - X
+        Y_star = Y - (self.At_AtA_inv @ res.unsqueeze(-1)).squeeze(-1)
+        return Y_star
+
     def obj_fn(self, Y):
         return (0.5*(Y@self.Q)*Y + self.p*torch.sin(Y)).sum(dim=1)
 
@@ -695,6 +754,33 @@ class nonconvex_ipopt(object):
     #         alpha_du, alpha_pr, ls_trials):
     #     print("Objective value at iteration #%d is - %g" % (iter_count, obj_value))
 
+def build_ipopt(Q, p, A, Xi, G, h, y0=None, solver_type='ipopt', tol=1e-4):
+    # if y0 is None:
+    #     y0 = np.linalg.pinv(A)@Xi  # feasible initial point
+    num_var = A.shape[1]
+    # upper and lower bounds on variables
+    lb = -np.infty * np.ones(num_var)
+    ub = np.infty * np.ones(num_var)
+
+    # upper and lower bounds on constraints
+    cl = np.hstack([Xi, -np.inf * np.ones(G.shape[0])])
+    cu = np.hstack([Xi, h])
+
+    nlp = ipopt.problem(n=num_var,
+                        m=len(cl),
+                        problem_obj=nonconvex_ipopt(Q, p, A, G),
+                        lb=lb,
+                        ub=ub,
+                        cl=cl,
+                        cu=cu)
+
+    nlp.add_option('tol', tol)
+    nlp.add_option('print_level', 0) # 3)
+
+    # start_time = time.time()
+    # y, info = nlp.solve(y0)
+    # end_time = time.time()
+    return nlp
 
 
 ###################################################################

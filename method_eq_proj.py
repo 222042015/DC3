@@ -13,6 +13,7 @@ import time
 from setproctitle import setproctitle
 import os
 import argparse
+import scipy.io as spio
 
 from utils import my_hash, str_to_bool
 from qcqp_utils import QCQPProbem
@@ -24,7 +25,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='method_eq_proj')
-    parser.add_argument('--probType', type=str, default='simple', help='problem type')
+    parser.add_argument('--probType', type=str, default='dcopf50', help='problem type')
         # choices=['simple', 'nonconvex', 'acopf57', 'convex_qcqp', 'dcopf']
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -103,7 +104,7 @@ def main():
         with open(filepath, 'rb') as f:
             dataset = pickle.load(f)
         start_time = time.time()
-        data = DcopfProblem(dataset, valid_frac=0.0833, test_frac=0.001)
+        data = DcopfProblem(dataset, valid_frac=0.0833, test_frac=0.0833)
         print("Data load time: {:.4f}".format(time.time() - start_time))
     else:
         raise NotImplementedError
@@ -149,7 +150,7 @@ def train_net(data, args, save_dir):
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
-    scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=500, gamma=0.95)
+    scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=100, gamma=0.95)
 
     args['factor'] = 5
 
@@ -175,13 +176,14 @@ def train_net(data, args, save_dir):
             Xtrain = Xtrain[0].to(DEVICE)
             start_time = time.time()
             solver_opt.zero_grad()
+            start_time = time.time()
             Yhat_train = solver_net(Xtrain)
             Ystar = data.projection(Xtrain, Yhat_train)
-            if i < 100:
+            end_time = time.time()
+            # print('projection time: {:.4f}'.format(end_time - start_time))
+            if i < 0:
                 train_loss = softloss1(data, Xtrain, Yhat_train, args)
                 # train_loss = projloss(data, Xtrain, Yhat_train, Ystar, args)
-            elif i < 200:
-                train_loss = softloss(data, Xtrain, Ystar, args)
             else:
                 train_loss = softloss(data, Xtrain, Ystar, args)
             train_loss.sum().backward()
@@ -201,8 +203,8 @@ def train_net(data, args, save_dir):
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
                 np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
 
-        if i % 50 == 0 and i > 100:
-            args['factor'] = min(5000, args['factor'] * 1.5)
+        if i % 40 == 0 :#and i >= 100:
+            args['factor'] = min(1000, args['factor'] * 1.2)
             print('iteration {}: factor {}'.format(i, args['factor']))
 
         # if args['saveAllStats']:
