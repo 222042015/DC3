@@ -23,14 +23,11 @@ import argparse
 from utils import my_hash, str_to_bool
 import default_args
 
-from torch.utils.tensorboard import SummaryWriter
-
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='DeepLDE')
-    parser.add_argument('--probType', type=str, default='acopf57',help='problem type')
-        # choices=['simple', 'nonconvex', 'acopf57', 'acopf118', 'acopf300', 'acopf1354'], help='problem type')
+    parser.add_argument('--probType', type=str, default='nonconvex',help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -80,14 +77,13 @@ def main():
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
-    # defaults = default_args.method_default_args(args['probType'])
     defaults = default_args.deeplde_default_args(args['probType'])
     for key in defaults.keys():
         if args[key] is None:
             args[key] = defaults[key]
     print(args)
 
-    setproctitle('DC3-{}'.format(args['probType']))
+    setproctitle('DeepLDE-{}'.format(args['probType']))
 
     # Load data, and put on GPU if needed
     prob_type = args['probType']
@@ -143,15 +139,6 @@ def train_net(data, args, save_dir):
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
 
     stats = {}
-    # T = 42 # total outer iterations
-    # I = 25 # total innter iterations
-    # I_warmup = 100
-    # beta = 5 # increase the number of inner interations after each outer iteration
-    # gamma = 0.01 # decrease the step size for the dual update every outer iteration
-
-    # # initialize the dual variables and the step size
-    # rho = 0.5
-    # lam = torch.ones(data.nineq, device=DEVICE) * 0.1
     I_warmup = args['inner_warmstart']
     beta = args['beta']
     gamma = args['gamma']
@@ -159,8 +146,6 @@ def train_net(data, args, save_dir):
     lam = torch.ones(data.nineq, device=DEVICE) * args['lambda']
     T = args['outer_iter']
     I = args['inner_iter'] - beta
-
-    writer = SummaryWriter('runs/{}'.format(save_dir))
 
     step = 0
     for t in range(T+1):
@@ -205,13 +190,6 @@ def train_net(data, args, save_dir):
                     np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
                     np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_time'])))
 
-            # write to tensorboard
-            writer.add_scalar('train_loss', np.mean(epoch_stats['train_loss']), step)
-            writer.add_scalar('valid_eval', np.mean(epoch_stats['valid_eval']), step)
-            writer.add_scalar('valid_ineq_max', np.mean(epoch_stats['valid_ineq_max']), step)
-            writer.add_scalar('valid_ineq_mean', np.mean(epoch_stats['valid_ineq_mean']), step)
-            writer.add_scalar('valid_eq_max', np.mean(epoch_stats['valid_eq_max']), step)
-
             if args['saveAllStats']:
                 if t == 0 and i == 0:
                     for key in epoch_stats.keys():
@@ -237,13 +215,13 @@ def train_net(data, args, save_dir):
                 Xtrain = Xtrain[0].to(DEVICE)
                 Yhat_train = solver_net(Xtrain)
                 epoch_ineq_dist += data.ineq_dist(Xtrain, Yhat_train).sum(dim=0)
-            if t == 0:
-                # lam = torch.ones(data.nineq, device=DEVICE) * 0.1
-                lam = torch.ones(data.nineq, device=DEVICE) * args['lambda']
-            else:
-                lam = lam + rho * epoch_ineq_dist
+            # if t == 0:
+            #     lam = torch.ones(data.nineq, device=DEVICE) * args['lambda']
+            # else:
+                # 
+            lam = lam + rho * epoch_ineq_dist
             I = I + beta
-            rho = rho / (1 + gamma * t)
+            rho = rho / (1 + gamma * (t+1))
 
         print("outer iteration: {}, step: {}, rho: {}, lam: {}".format(t, step, rho, lam.abs().max().item()))
 
@@ -342,7 +320,7 @@ class NNSolver(nn.Module):
         if self._args['useCompl']:
             if 'acopf' in self._args['probType']:
                 out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-            return self._data.complete_partial(x, out)[0]
+            return self._data.complete_partial(x, out)
         else:
             return self._data.process_output(x, out)
 
