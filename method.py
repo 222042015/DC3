@@ -1,8 +1,8 @@
-try:
-    import waitGPU
-    waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
-except ImportError:
-    pass
+# try:
+#     import waitGPU
+#     waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
+# except ImportError:
+#     pass
 
 import torch
 import torch.nn as nn
@@ -28,8 +28,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 def main():
     parser = argparse.ArgumentParser(description='DC3')
     parser.add_argument('--probType', type=str, default='acopf57',
-                        help='problem type')
-        # choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
+        choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -99,9 +98,8 @@ def main():
     elif prob_type == 'nonconvex':
         filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
-    # elif prob_type == 'acopf57':
-    elif 'acopf' in prob_type:
-        filepath = os.path.join('datasets', 'acopf', prob_type+'_dataset')
+    elif prob_type == 'acopf57':
+        filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
     else:
         raise NotImplementedError
 
@@ -148,6 +146,18 @@ def train_net(data, args, save_dir):
     for i in range(nepochs):
         epoch_stats = {}
 
+        # Get valid loss
+        solver_net.eval()
+        for Xvalid in valid_loader:
+            Xvalid = Xvalid[0].to(DEVICE)
+            eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
+
+        # Get test loss
+        solver_net.eval()
+        for Xtest in test_loader:
+            Xtest = Xtest[0].to(DEVICE)
+            eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
+
         # Get train loss
         solver_net.train()
         for Xtrain in train_loader:
@@ -162,19 +172,6 @@ def train_net(data, args, save_dir):
             train_time = time.time() - start_time
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
-        
-        # Get valid loss
-        solver_net.eval()
-        for Xvalid in valid_loader:
-            Xvalid = Xvalid[0].to(DEVICE)
-            eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
-
-        if i%100 == 0:
-            # Get test loss
-            solver_net.eval()
-            for Xtest in test_loader:
-                Xtest = Xtest[0].to(DEVICE)
-                eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
 
         print(
             'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}'.format(
@@ -383,7 +380,6 @@ class NNSolver(nn.Module):
         if self._args['useCompl']:
             if 'acopf' in self._args['probType']:
                 out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-
             return self._data.complete_partial(x, out)
         else:
             return self._data.process_output(x, out)
