@@ -1,8 +1,8 @@
-try:
-    import waitGPU
-    waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
-except ImportError:
-    pass
+# try:
+#     import waitGPU
+#     waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
+# except ImportError:
+#     pass
 
 import torch
 import torch.nn as nn
@@ -26,9 +26,8 @@ import default_args
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
-    parser = argparse.ArgumentParser(description='DC3')
+    parser = argparse.ArgumentParser(description='pdl')
     parser.add_argument('--probType', type=str, default='simple',help='problem type')
-        # choices=['simple', 'nonconvex', 'acopf57', 'acopf118', 'acopf300', 'acopf1354'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -104,7 +103,7 @@ def main():
 
     print("number of samples: {}".format(data.num))
 
-    save_dir = os.path.join('results/pdl', str(data), 'method', my_hash(str(sorted(list(args.items())))),
+    save_dir = os.path.join('results', str(data), 'method_pdl', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -135,14 +134,19 @@ def train_net(data, args, save_dir):
         primal = Primal_NN_ACOPF(data, args)
     else:
         primal = Primal_NN(data, args)
-    dual = Dual_NN(data, args)
     primal.to(DEVICE)
+    
+    dual = Dual_NN(data, args)
     dual.to(DEVICE)
 
     # make a copy of the dual network and froze the parameters
     dual_copy = Dual_NN(data, args)
     dual_copy.to(DEVICE)
     dual_copy.eval()
+    dual_copy.load_state_dict(dual.state_dict())
+    # freeze the parameters of the dual_copy network
+    for param in dual_copy.parameters():
+        param.requires_grad = False
 
     primal_opt = optim.Adam(primal.parameters(), lr=solver_step)
     dual_opt = optim.Adam(dual.parameters(), lr=solver_step)
@@ -153,12 +157,21 @@ def train_net(data, args, save_dir):
     best_dual_valid_loss = float('inf')
 
     for k in range(outer_iter):
-        epoch_stats = {}
-
-        # froze the dual network
         dual.eval()
+        dual_copy.eval()
         # train the primal network
         for l in range(inner_iter): # inner for loop for l epochs
+            epoch_stats = {}
+            primal.eval()
+            for Xvalid in valid_loader:
+                Xvalid = Xvalid[0].to(DEVICE)
+                eval_primal_net(data, Xvalid, primal, dual, args, 'valid', epoch_stats)
+                
+            primal.eval()
+            for Xtest in test_loader:
+                Xtest = Xtest[0].to(DEVICE)
+                eval_primal_net(data, Xtest, primal, dual, args, 'test', epoch_stats)
+            
             primal.train()
             for Xtrain in train_loader:
                 Xtrain = Xtrain[0].to(DEVICE)
@@ -166,36 +179,48 @@ def train_net(data, args, save_dir):
                 primal_opt.zero_grad()
                 Yhat_train = primal(Xtrain)
                 # calculate the dual variables
-                duals = dual(Xtrain)
+                duals = dual_copy(Xtrain)
                 # calculate the primal loss
                 primal_loss_train = primal_loss(data, Xtrain, Yhat_train, duals, args)
                 primal_loss_train.sum().backward()
                 primal_opt.step()
                 train_time = time.time() - start_time
-                dict_agg(epoch_stats, 'train_primal_loss', primal_loss_train.detach().cpu().numpy())
-                dict_agg(epoch_stats, 'train_primal_time', train_time, op='sum')
+                dict_agg(epoch_stats, 'train_loss', primal_loss_train.detach().cpu().numpy())
+                dict_agg(epoch_stats, 'train_time', train_time, op='sum')
             
             if l % 100 == 0:
-                print('Training: Outer iter {}, inner epoch {}: primal train loss {:.4f}, learning rate {:.4e}'.format(k, l, np.mean(epoch_stats['train_primal_loss']), primal_opt.param_groups[0]['lr']))
+                print('Training P: Outer iter {}, inner epoch {}: primal train loss {:.4f}, learning rate {:.4e}'.format(k, l, np.mean(epoch_stats['train_loss']), primal_opt.param_groups[0]['lr']))
 
-
+            # saving the stats, if saveAllStats, then save all stats for each epoch, otherwise, only save the stats for the latest epoch
+            if args['saveAllStats']:
+                if l == 0 and k == 0:
+                    for key in epoch_stats.keys():
+                        stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
+                else:
+                    for key in epoch_stats.keys():
+                        stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
+            else:
+                stats = epoch_stats
+                
+        # update the learning rate for primal network
         # validate on the validation set
-        primal.eval()
-        for Xvalid in valid_loader:
-            Xvalid = Xvalid[0].to(DEVICE)
-            eval_primal_net(data, Xvalid, primal, dual, args, 'valid', epoch_stats)
-        # if the average validation loss is greater than the best validation loss, thrink the learning rate by a factor of 0.99
-        if np.mean(epoch_stats['valid_primal_loss']) > best_primal_valid_loss:
-            for param_group in primal_opt.param_groups:
-                param_group['lr'] *= 0.99
-        else:
-            best_primal_valid_loss = np.mean(epoch_stats['valid_primal_loss'])
-        print('Validation: Outer iter {}, inner epoch {}: primal validation loss {:.4f}, learning rate {:.4e}'.format(k, l, np.mean(epoch_stats['valid_primal_loss']), primal_opt.param_groups[0]['lr']))
+        # primal.eval()
+        # for Xvalid in valid_loader:
+        #     Xvalid = Xvalid[0].to(DEVICE)
+        #     eval_primal_net(data, Xvalid, primal, dual, args, 'valid', epoch_stats)
+        # # if the average validation loss is greater than the best validation loss, thrink the learning rate by a factor of 0.99
+        # if np.mean(epoch_stats['valid_loss']) > best_primal_valid_loss:
+        #     for param_group in primal_opt.param_groups:
+        #         param_group['lr'] *= 0.99
+        # else:
+        #     best_primal_valid_loss = np.mean(epoch_stats['valid_loss'])
+        # print('Validation: Outer iter {}, inner epoch {}: primal validation loss {:.4f}, learning rate {:.4e}'.format(k, l, np.mean(epoch_stats['valid_loss']), primal_opt.param_groups[0]['lr']))
 
-
-        dual_copy.load_state_dict(dual.state_dict())
+        # train the dual network
+        # dual_copy.load_state_dict(dual.state_dict())
         primal.eval()
         for l in range(inner_iter):
+            dual_epoch_stats = {}
             dual.train()
             for Xtrain in train_loader:
                 Xtrain = Xtrain[0].to(DEVICE)
@@ -208,56 +233,38 @@ def train_net(data, args, save_dir):
                 dual_loss_train.sum().backward()
                 dual_opt.step()
                 train_time = time.time() - start_time
-                dict_agg(epoch_stats, 'train_dual_loss', dual_loss_train.detach().cpu().numpy())
-                dict_agg(epoch_stats, 'train_dual_time', train_time, op='sum')
+                dict_agg(dual_epoch_stats, 'train_dual_loss', dual_loss_train.detach().cpu().numpy())
+                dict_agg(dual_epoch_stats, 'train_dual_time', train_time, op='sum')
             
             if l % 100 == 0:
-                print('Training: Outer iter {}, inner epoch {}: dual train loss {:.4f}, learning rate {:.4e}'.format(k, l, np.mean(epoch_stats['train_dual_loss']), dual_opt.param_groups[0]['lr']))
+                print('Training D: Outer iter {}, inner epoch {}: dual train loss {:.4f}, learning rate {:.4e}'.format(k, l, np.mean(dual_epoch_stats['train_dual_loss']), dual_opt.param_groups[0]['lr']))
 
-        dual.eval()
-        for Xvalid in valid_loader:
-            Xvalid = Xvalid[0].to(DEVICE)
-            eval_dual_net(data, Xvalid, primal, dual, dual_copy, args, 'valid', epoch_stats)
+        # dual.eval()
+        # for Xvalid in valid_loader:
+        #     Xvalid = Xvalid[0].to(DEVICE)
+        #     eval_dual_net(data, Xvalid, primal, dual, dual_copy, args, 'valid', dual_epoch_stats)
             
-        if np.mean(epoch_stats['valid_dual_loss']) > best_dual_valid_loss:
-            for param_group in dual_opt.param_groups:
-                param_group['lr'] *= 0.99
-        else:
-            best_dual_valid_loss = np.mean(epoch_stats['valid_dual_loss'])
-        print('Validation: Outer iter {}, inner epoch {}: dual validation loss {:.4f}, learning rate {:.4e}'.format(k, l, np.mean(epoch_stats['valid_dual_loss']), dual_opt.param_groups[0]['lr']))
+        # if np.mean(dual_epoch_stats['valid_dual_loss']) > best_dual_valid_loss:
+        #     for param_group in dual_opt.param_groups:
+        #         param_group['lr'] *= 0.99
+        # else:
+        #     best_dual_valid_loss = np.mean(dual_epoch_stats['valid_dual_loss'])
+        # print('Validation: Outer iter {}, inner epoch {}: dual validation loss {:.4f}, learning rate {:.4e}'.format(k, l, np.mean(dual_epoch_stats['valid_dual_loss']), dual_opt.param_groups[0]['lr']))
 
 
         # update the dual_copy network with the parameters in dual
         dual_copy.load_state_dict(dual.state_dict())
-        
-        primal.eval()
-        dual.eval()
-        for Xtest in test_loader:
-            Xtest = Xtest[0].to(DEVICE)
-            eval_primal_net(data, Xtest, primal, dual, args, 'test', epoch_stats)
 
-        
         print("Test epoch {}: loss {:.4f}, eval {:.4f}, ground_truth {:.4f}, ineq_max {:.4f}, ineq_mean {:.4f}, eq_max {:.4f}, eq_mean {:.4f}".format(\
-            k, np.mean(epoch_stats['test_primal_loss']), np.mean(epoch_stats['test_primal_eval']), np.mean(data.obj_fn(data.testY).detach().cpu().numpy()), \
-            np.mean(epoch_stats['test_primal_ineq_max']), np.mean(epoch_stats['test_primal_ineq_mean']), np.mean(epoch_stats['test_primal_eq_max']), np.mean(epoch_stats['test_primal_eq_mean'])))
+            k, np.mean(epoch_stats['test_loss']), np.mean(epoch_stats['test_eval']), np.mean(data.obj_fn(data.testY).detach().cpu().numpy()), \
+            np.mean(epoch_stats['test_ineq_max']), np.mean(epoch_stats['test_ineq_mean']), np.mean(epoch_stats['test_eq_max']), np.mean(epoch_stats['test_eq_mean'])))
         
 
         # update the penalty parameter rho
         update_rho(data, primal, dual, args)
-        
+        # 
 
-        # saving the stats, if saveAllStats, then save all stats for each epoch, otherwise, only save the stats for the latest epoch
-        if args['saveAllStats']:
-            if k == 0:
-                for key in epoch_stats.keys():
-                    stats[key] = np.expand_dims(np.array(epoch_stats[key]), axis=0)
-            else:
-                for key in epoch_stats.keys():
-                    stats[key] = np.concatenate((stats[key], np.expand_dims(np.array(epoch_stats[key]), axis=0)))
-        else:
-            stats = epoch_stats
-
-        if (l % args['resultsSaveFreq'] == 0):
+        if (k % args['resultsSaveFreq'] == 0):
             with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
                 pickle.dump(stats, f)
             with open(os.path.join(save_dir, 'primal_net.dict'), 'wb') as f:
@@ -277,16 +284,18 @@ def train_net(data, args, save_dir):
         
 
 def eval_primal_net(data, X, primal_nn, dual_nn, args, prefix, stats):
+    start_time = time.time()
     Y = primal_nn(X)
+    total_time = time.time() - start_time
     duals = dual_nn(X)
-    make_prefix = lambda x: "{}_{}_{}".format(prefix, 'primal', x)
+    make_prefix = lambda x: "{}_{}".format(prefix, x)
     dict_agg(stats, make_prefix('loss'), primal_loss(data, X, Y, duals, args).detach().cpu().numpy())
     dict_agg(stats, make_prefix('eval'), data.obj_fn(Y).detach().cpu().numpy())
     dict_agg(stats, make_prefix('ineq_max'), torch.max(data.ineq_dist(X, Y), dim=1)[0].detach().cpu().numpy())
     dict_agg(stats, make_prefix('ineq_mean'), torch.mean(data.ineq_dist(X, Y), dim=1).detach().cpu().numpy())
     dict_agg(stats, make_prefix('eq_max'), torch.max(torch.abs(data.eq_resid(X, Y)), dim=1)[0].detach().cpu().numpy())
     dict_agg(stats, make_prefix('eq_mean'), torch.mean(torch.abs(data.eq_resid(X, Y)), dim=1).detach().cpu().numpy())
-    
+    dict_agg(stats, make_prefix('time'), total_time, op='sum')
     return stats
 
 def eval_dual_net(data, X, primal_nn, dual_nn, dual_nn_prev, args, prefix, stats):
@@ -393,8 +402,10 @@ class Dual_NN(nn.Module):
 
         for layer in layers:
             if type(layer) == nn.Linear:
-                layer.weight.data.fill_(0)
-                layer.bias.data.fill_(0)
+                nn.init.kaiming_normal_(layer.weight)
+        
+        layers[-1].weight.data.fill_(0)
+        layers[-1].bias.data.fill_(0)
         
         self.net = nn.Sequential(*layers)
     

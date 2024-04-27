@@ -213,15 +213,15 @@ def method_default_args(prob_type):
 def pdl_default_args(prob_type):
     defaults = {}
     defaults['simpleVar'] = 100
-    defaults['simpleIneq'] = 30
-    defaults['simpleEq'] = 70
+    defaults['simpleIneq'] = 50
+    defaults['simpleEq'] = 50
     defaults['simpleEx'] = 10000
     defaults['nonconvexVar'] = 100
     defaults['nonconvexIneq'] = 50
     defaults['nonconvexEq'] = 50
     defaults['nonconvexEx'] = 10000
     defaults['saveAllStats'] = True
-    defaults['resultsSaveFreq'] = 50
+    defaults['resultsSaveFreq'] = 1
 
     if prob_type == "simple":
         defaults['max_outer_iter'] = 10 # K
@@ -236,14 +236,14 @@ def pdl_default_args(prob_type):
         defaults['v'] = 0 # initialize the current maximum violations
     elif prob_type == "nonconvex":
         defaults['max_outer_iter'] = 10 
-        defaults['max_inner_iter'] = 5000
-        defaults['alpha'] = 1.5 
+        defaults['max_inner_iter'] = 500
+        defaults['alpha'] = 10 
         defaults['tau'] = 0.8 
-        defaults['rho_max'] = 10000
+        defaults['rho_max'] = 5000
         defaults['batchSize'] = 200
         defaults['lr'] = 1e-4
         defaults['hiddenSize'] = 500
-        defaults['rho'] = 1.0 
+        defaults['rho'] = 0.5 
         defaults['v'] = 0 
     elif "acopf" in prob_type:
         defaults['max_outer_iter'] = 100 
@@ -300,9 +300,27 @@ def deeplde_default_args(prob_type):
     defaults['corrEps'] = 1e-4
 
     if prob_type == 'simple':
-        pass
+        defaults['batchSize'] = 200
+        defaults['lr'] = 1e-3 #1e-3
+        defaults['hiddenSize'] = 200
+        defaults['inner_warmstart'] = 100
+        defaults['inner_iter'] = 25
+        defaults['outer_iter'] = 15
+        defaults['beta'] = 5
+        defaults['rho'] = 0.1 # 0.0001 ineq30eq70, 1e-3 ineq70eq30
+        defaults['lambda'] = 0.1 # 1e-2 ineq50eq50, 0.1 ineq30eq70, 0.1 ineq70eq30
+        defaults['gamma'] = 0.01 
     elif prob_type == 'nonconvex':
-        pass
+        defaults['batchSize'] = 200
+        defaults['lr'] = 1e-3 # 1e-4-118
+        defaults['hiddenSize'] = 200
+        defaults['inner_warmstart'] = 100
+        defaults['inner_iter'] = 25
+        defaults['outer_iter'] = 15
+        defaults['beta'] = 5
+        defaults['rho'] = 0.1
+        defaults['lambda'] = 0.1
+        defaults['gamma'] = 0.01
     elif prob_type == 'acopf57':
         defaults['batchSize'] = 200
         defaults['lr'] = 1e-3 # 1e-4-118
@@ -311,7 +329,7 @@ def deeplde_default_args(prob_type):
         defaults['inner_iter'] = 25
         defaults['outer_iter'] = 15
         defaults['beta'] = 5
-        defaults['rho'] = 0.5
+        defaults['rho'] = 0.1
         defaults['lambda'] = 0.1
         defaults['gamma'] = 0.01
 

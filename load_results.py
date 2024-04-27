@@ -18,17 +18,23 @@ def main():
 def get_experiment_dirs(path_prefix):
     exper_dirs = {}
 
-    eq = 50
-    for ineq in [10, 30, 50, 70, 90]:
-        exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
+    # eq = 50
+    # for ineq in [10, 30, 50, 70, 90]:
+    #     exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
         
-    ineq = 50
-    for eq in [10, 30, 70, 90]:
-        exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
-        
-    exper_dirs['nonconvex'] = 'NonconvexProblem-100-50-50-10000'
+    # ineq = 50
+    # for eq in [10, 30, 70, 90]:
+    #     exper_dirs['simple_ineq{}_eq{}'.format(ineq, eq)] = 'SimpleProblem-100-{}-{}-10000'.format(ineq, eq)
+    
+    exper_dirs['simple_ineq{}_eq{}'.format(30, 70)] = 'SimpleProblem-100-{}-{}-10000'.format(30, 70)
+    exper_dirs['simple_ineq{}_eq{}'.format(70, 30)] = 'SimpleProblem-100-{}-{}-10000'.format(70, 30)
+    exper_dirs['simple_ineq{}_eq{}'.format(50, 50)] = 'SimpleProblem-100-{}-{}-10000'.format(50, 50)
+    exper_dirs['nonconvex_ineq{}_eq{}'.format(50, 50)] = 'NonconvexProblem-100-{}-{}-10000'.format(50, 50)
 
-    exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
+    exper_dirs['nonconvex_ineq{}_eq{}'.format(30, 70)] = 'NonconvexProblem-100-{}-{}-10000'.format(30, 70)
+    exper_dirs['nonconvex_ineq{}_eq{}'.format(70, 30)] = 'NonconvexProblem-100-{}-{}-10000'.format(70, 30)
+
+    # exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
 
     for key in exper_dirs.keys():
         exper_dirs[key] = os.path.join(path_prefix, exper_dirs[key])
@@ -44,7 +50,8 @@ def get_status_results(exper_dirs):
     opt_methods = dict([
             ('simple', ['osqp', 'qpth']), ('nonconvex', ['ipopt']), ('acopf', ['pypower'])
     ])
-    nn_baseline_dirs = [('baseline_nn', 'baselineNN'), ('baseline_eq_nn', 'baselineEqNN')]
+    nn_baseline_dirs = [('baseline_nn', 'baselineNN'), ('baseline_eq_nn', 'baselineEqNN')] \
+        + [('method_deeplde', 'method_deeplde'), ('method_pdl', 'method_pdl')]
 
     for exper, exper_dir in exper_dirs.items():
         print(exper)
@@ -156,7 +163,10 @@ def check_running_done(path, is_opt=False):
             if os.path.exists(os.path.join(path, 'stats.dict')):
                 with open(os.path.join(path, 'stats.dict'), 'rb') as f:
                     stats = pickle.load(f)
-                is_done = (len(stats['valid_time']) == 1000)
+                if "method_pdl" in path:
+                    is_done = (len(stats['valid_time']) >= 1500)
+                else:
+                    is_done = (len(stats['valid_time']) == 1000)
                 if not is_done:
                     print(len(stats['valid_time']))
         except Exception as e:
