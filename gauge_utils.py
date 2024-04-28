@@ -20,6 +20,9 @@ from pypower.api import case57
 from pypower.api import opf, makeYbus
 from pypower import idx_bus, idx_gen, ppoption
 
+import gurobipy as gp
+from gurobipy import Model, GRB, QuadExpr, LinExpr
+
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
@@ -297,6 +300,55 @@ class SimpleProblem:
             raise NotImplementedError
 
         return sols, total_time, parallel_time
+
+    def get_interior_point(self, X, M=1e4, tol=1e-4):
+        Q, p, A, G, h = self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np
+        A_other_inv = self._A_other_inv.detach().cpu().numpy()
+        X_np = X.detach().cpu().numpy()
+        tmp_h_coeff = G[:, self.other_vars] @A_other_inv
+        tmp_G = G[:, self.partial_vars] - G[:, self.other_vars] @ A_other_inv @ A[:, self.partial_vars]
+
+        IP = []
+        for Xi in X_np:
+            tmp_h = h - tmp_h_coeff @ Xi
+            model = gp.Model("qp")
+            model.setParam('OutputFlag', 0)
+            model.setParam('FeasibilityTol', tol)
+
+            n_vars = len(self.partial_vars)
+            vars = []
+            for i in range(n_vars):
+                vars.append(model.addVar(lb=-np.infty, ub=np.infty, vtype=GRB.CONTINUOUS, name=f"yp_{i}"))
+
+            ya = model.addVar(lb=-np.infty, ub=0, vtype=GRB.CONTINUOUS, name="ya")
+
+            obj = LinExpr()
+            obj.add(M * ya)
+            model.setObjective(obj, GRB.MINIMIZE)
+
+            for i in range(tmp_G.shape[0]):
+                for j in range(n_vars):
+                    if tmp_G[i, j] != 0:
+                        expr = LinExpr()
+                        expr.add(vars[j] * tmp_G[i, j])
+                        model.addConstr(expr <= tmp_h[i] + ya)
+            
+            model.optimize()
+            if model.status == GRB.Status.OPTIMAL and model.getVarByName("ya").x < 0:
+                IP.append(np.array([v.x for v in vars]))
+            else:
+                IP.append(np.ones(n_vars) * np.nan)
+        return np.array(IP)
+
+    def remove_no_ip(self):
+        IP = self.get_interior_point(self.X)
+        feas_mask = ~np.isnan(IP).all(axis=1)
+        self._num = feas_mask.sum()
+        self._X = self._X[feas_mask]
+        self._Y = torch.tensor(IP[feas_mask])
+        self.IP = torch.tensor(IP)
+        self.IP_np = IP
+        return IP
 
     def calc_Y(self):
         Y = self.opt_solve(self.X)[0]
