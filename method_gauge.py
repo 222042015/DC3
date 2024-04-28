@@ -58,26 +58,13 @@ def main():
         help='whether to use completion')
     parser.add_argument('--corrEps', type=float,
         help='correction procedure tolerance')
-    
-    parser.add_argument('--inner_warmstart', type=int,
-        help='number of epochs for warmstart')
-    parser.add_argument('--inner_iter', type=int,
-        help='number of epochs in the inner iterations')
-    parser.add_argument('--outer_iter', type=int,
-        help='number of outer iterations')
-    parser.add_argument('--beta', type=float,
-        help='increase the number of inner interations after each outer iteration')
-    parser.add_argument('--rho', type=float,
-        help='initial rho')
-    parser.add_argument('--lambda', type=float,
-        help='initial lambda')
-    parser.add_argument('--gamma', type=float,
-        help='Decrements of step size')
+    parser.add_argument('--epochs', type=int, 
+                        help='number of iterations for training')
     
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
-    defaults = default_args.deeplde_default_args(args['probType'])
+    defaults = default_args.gauge_default_args(args['probType'])
     for key in defaults.keys():
         if args[key] is None:
             args[key] = defaults[key]
@@ -119,10 +106,8 @@ def main():
 
 
 def train_net(data, args, save_dir):
-    # solver_step = args['lr']
-    # batch_size = args['batchSize']
-    solver_step = 1e-3
-    batch_size = 32
+    solver_step = args['lr']
+    batch_size = args['batchSize']
     
     train_dataset = TensorDataset(data.trainX, data.trainIP)
     valid_dataset = TensorDataset(data.validX, data.validIP)
@@ -135,10 +120,10 @@ def train_net(data, args, save_dir):
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
-    scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=1000, gamma=0.95)
+    scheduler = optim.lr_scheduler.StepLR(solver_opt, step_size=100, gamma=0.95)
 
     stats = {}
-    for i in range(10000):
+    for i in range(args['epochs']):
         epoch_stats = {}
         # Get valid loss
         solver_net.eval()
@@ -219,7 +204,6 @@ def eval_net(data, X, u0, solver_net, args, prefix, stats):
     make_prefix = lambda x: "{}_{}".format(prefix, x)
 
     start_time = time.time()
-    # Y = solver_net(X)
     v = solver_net(X, u0)
     Ypartial = data.gauge_map(v, u0, X)
     Y = data.complete_partial(X, Ypartial)
@@ -246,7 +230,6 @@ def eval_net(data, X, u0, solver_net, args, prefix, stats):
              torch.sum(torch.abs(data.eq_resid(X, Y)) > 100 * eps_converge, dim=1).detach().cpu().numpy())
     
     dict_agg(stats, make_prefix('raw_time'), end_time - start_time, op='sum')
-    # dict_agg(stats, make_prefix('steps'), np.array([steps]))
     dict_agg(stats, make_prefix('raw_eval'), data.obj_fn(Y).detach().cpu().numpy())
     dict_agg(stats, make_prefix('raw_ineq_max'), torch.max(data.ineq_dist(X, Y), dim=1)[0].detach().cpu().numpy())
     dict_agg(stats, make_prefix('raw_ineq_mean'), torch.mean(data.ineq_dist(X, Y), dim=1).detach().cpu().numpy())
@@ -269,9 +252,9 @@ class NNSolver(nn.Module):
         self._data = data
         self._args = args
         output_dim = data.ydim - data.nknowns - data.neq
-        layer_sizes = [data.xdim + output_dim, 100] #self._args['hiddenSize'], self._args['hiddenSize']]
+        layer_sizes = [data.xdim + output_dim, self._args['hiddenSize']]
         layers = reduce(operator.add,
-            [[nn.Linear(a,b), nn.ReLU()] # , nn.Dropout(p=0.1)]
+            [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.1)] 
                 for a,b in zip(layer_sizes[0:-1], layer_sizes[1:])])
 
         layers += [nn.Linear(layer_sizes[-1], output_dim)]

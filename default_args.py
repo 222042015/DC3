@@ -337,3 +337,34 @@ def deeplde_default_args(prob_type):
         raise NotImplementedError
 
     return defaults
+
+
+def gauge_default_args(prob_type):
+    defaults = {}
+    defaults['simpleVar'] = 100
+    defaults['simpleIneq'] = 50
+    defaults['simpleEq'] = 50
+    defaults['simpleEx'] = 1200
+    defaults['nonconvexVar'] = 100
+    defaults['nonconvexIneq'] = 50
+    defaults['nonconvexEq'] = 50
+    defaults['nonconvexEx'] = 1200
+    defaults['saveAllStats'] = True
+    defaults['resultsSaveFreq'] = 50
+    defaults['useCompl'] = True
+    defaults['corrEps'] = 1e-4
+
+    if prob_type == 'simple':
+        defaults['batchSize'] = 200
+        defaults['lr'] = 1e-3
+        defaults['hiddenSize'] = 200
+        defaults['epochs'] = 3000
+    elif prob_type == 'nonconvex':
+        defaults['batchSize'] = 200
+        defaults['lr'] = 1e-3 # 1e-4-118
+        defaults['hiddenSize'] = 200
+        defaults['epochs'] = 2000
+    else:
+        raise NotImplementedError
+
+    return defaults

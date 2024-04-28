@@ -5,7 +5,7 @@ import torch
 import sys
 import os
 sys.path.insert(1, os.path.join(sys.path[0], os.pardir, os.pardir))
-from utils import NonconvexProblem
+from gauge_utils import NonconvexProblem
 
 import os
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
@@ -13,9 +13,9 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 torch.set_default_dtype(torch.float64)
 
 num_var = 100
-num_ineq = 70
-num_eq = 30
-num_examples = 10000
+num_ineq = 50
+num_eq = 50
+num_examples = 1200
 
 np.random.seed(17)
 
@@ -25,9 +25,13 @@ A = np.random.normal(loc=0, scale=1., size=(num_eq, num_var))
 X = np.random.uniform(-1, 1, size=(num_examples, num_eq))
 G = np.random.normal(loc=0, scale=1., size=(num_ineq, num_var))
 h = np.sum(np.abs(G@np.linalg.pinv(A)), axis=1)
+L = np.ones((num_var))*-5
+U = np.ones((num_var))*5
 
-problem = NonconvexProblem(Q, p, A, G, h, X)
+problem = NonconvexProblem(Q, p, A, G, h, X, L, U)
 problem.calc_Y()
+print(len(problem.Y))
+problem.remove_no_ip()
 print(len(problem.Y))
 
 with open("./random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(num_var, num_ineq, num_eq, num_examples), 'wb') as f:
