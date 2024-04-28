@@ -49,12 +49,14 @@ class SimpleProblem:
         s.t.       Ay =  x
                    Gy <= h
     """
-    def __init__(self, Q, p, A, G, h, X, valid_frac=0.0833, test_frac=0.0833):
+    def __init__(self, Q, p, A, G, h, X, L, U, valid_frac=0.0833, test_frac=0.0833):
         self._Q = torch.tensor(Q)
         self._p = torch.tensor(p)
         self._A = torch.tensor(A)
-        self._G = torch.tensor(G)
-        self._h = torch.tensor(h)
+        # self._G = torch.tensor(G)
+        self._G = torch.cat([torch.tensor(G), torch.eye(G.shape[1]), -torch.eye(G.shape[1])], dim=0)
+        # self._h = torch.tensor(h)
+        self._h = torch.cat([torch.tensor(h), torch.tensor(U), -torch.tensor(L)], dim=0)
         self._X = torch.tensor(X)
         self._Y = None
         self._xdim = X.shape[1]
@@ -65,6 +67,10 @@ class SimpleProblem:
         self._nknowns = 0
         self._valid_frac = valid_frac
         self._test_frac = test_frac
+        self.L = torch.tensor(L)
+        self.U = torch.tensor(U)
+        self.L_np = L
+        self.U_np = U
         det = 0
         i = 0
         while abs(det) < 0.0001 and i < 100:
@@ -80,6 +86,11 @@ class SimpleProblem:
 
         ### For Pytorch
         self._device = None
+        self.G_tmp = self.G[:, self.partial_vars] - self.G[:, self.other_vars] @ (self._A_other_inv @ self._A_partial)
+        # self.L_partial = self.L[self.partial_vars]
+        # self.U_partial = self.U[self.partial_vars]
+        # self.L_np_partial = self.L_np[self.partial_vars]
+        # self.U_np_partial = self.U_np[self.partial_vars]
 
     def __str__(self):
         return 'SimpleProblem-{}-{}-{}-{}'.format(
@@ -213,6 +224,18 @@ class SimpleProblem:
     @property
     def testY(self):
         return self.Y[int(self.num*(self.train_frac + self.valid_frac)):]
+    
+    @property
+    def trainIP(self):
+        return self.IP[:int(self.num*self.train_frac)]
+
+    @property
+    def validIP(self):
+        return self.IP[int(self.num*self.train_frac):int(self.num*(self.train_frac + self.valid_frac))]
+
+    @property
+    def testIP(self):
+        return self.IP[int(self.num*(self.train_frac + self.valid_frac)):]
 
     @property
     def device(self):
@@ -272,8 +295,8 @@ class SimpleProblem:
         
         elif solver_type == 'osqp':
             print('running osqp')
-            Q, p, A, G, h = \
-                self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np
+            Q, p, A, G, h, L, U = \
+                self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np, self.L_np, self.U_np
             X_np = X.detach().cpu().numpy()
             Y = []
             total_time = 0
@@ -302,6 +325,7 @@ class SimpleProblem:
         return sols, total_time, parallel_time
 
     def get_interior_point(self, X, M=1e4, tol=1e-4):
+        # Q, p, A, G, h, L_partial, U_partial = self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np, self.L_np_partial, self.U_np_partial
         Q, p, A, G, h = self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np
         A_other_inv = self._A_other_inv.detach().cpu().numpy()
         X_np = X.detach().cpu().numpy()
@@ -327,11 +351,11 @@ class SimpleProblem:
             model.setObjective(obj, GRB.MINIMIZE)
 
             for i in range(tmp_G.shape[0]):
+                expr = LinExpr()
                 for j in range(n_vars):
                     if tmp_G[i, j] != 0:
-                        expr = LinExpr()
                         expr.add(vars[j] * tmp_G[i, j])
-                        model.addConstr(expr <= tmp_h[i] + ya)
+                model.addConstr(expr <= tmp_h[i] + ya)
             
             model.optimize()
             if model.status == GRB.Status.OPTIMAL and model.getVarByName("ya").x < 0:
@@ -346,8 +370,8 @@ class SimpleProblem:
         self._num = feas_mask.sum()
         self._X = self._X[feas_mask]
         self._Y = torch.tensor(IP[feas_mask])
-        self.IP = torch.tensor(IP)
-        self.IP_np = IP
+        self.IP = torch.tensor(IP[feas_mask])
+        self.IP_np = IP[feas_mask]
         return IP
 
     def calc_Y(self):
@@ -357,3 +381,22 @@ class SimpleProblem:
         self._X = self._X[feas_mask]
         self._Y = torch.tensor(Y[feas_mask])
         return Y
+
+    def gauge_unit_ball(self, v):
+        # when the set is the l_infinity unit ball, the mapping is the l-infinity norm
+        return torch.norm(v, p=float('inf'), dim=1)
+    
+    def get_tmp_h(self, X):
+        return self.h - (X @ self._A_other_inv.T) @ self.G[:, self.other_vars].T
+
+    def gauge_set(self, v, u0, X):
+        tmp_h = self.get_tmp_h(X) - u0 @ self.G_tmp.T
+        lhs = v @ self.G_tmp.T 
+        return torch.max(lhs / tmp_h, dim=1)[0]
+    
+    def gauge_map(self, v, u0, X):
+        phi_unit_ball = self.gauge_unit_ball(v)
+        phi_set = self.gauge_set(v, u0, X)
+        return (phi_unit_ball / phi_set).unsqueeze(1) * v + u0
+        
+        
