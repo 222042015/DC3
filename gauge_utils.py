@@ -285,8 +285,8 @@ class SimpleProblem:
         
         elif solver_type == 'osqp':
             print('running osqp')
-            Q, p, A, G, h, L, U = \
-                self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np, self.L_np, self.U_np
+            Q, p, A, G, h = \
+                self.Q_np, self.p_np, self.A_np, self.G_np, self.h_np
             X_np = X.detach().cpu().numpy()
             Y = []
             total_time = 0
