@@ -344,11 +344,11 @@ def gauge_default_args(prob_type):
     defaults['simpleVar'] = 100
     defaults['simpleIneq'] = 50
     defaults['simpleEq'] = 50
-    defaults['simpleEx'] = 1200
+    defaults['simpleEx'] = 10000
     defaults['nonconvexVar'] = 100
     defaults['nonconvexIneq'] = 50
     defaults['nonconvexEq'] = 50
-    defaults['nonconvexEx'] = 1200
+    defaults['nonconvexEx'] = 10000
     defaults['saveAllStats'] = True
     defaults['resultsSaveFreq'] = 50
     defaults['useCompl'] = True
