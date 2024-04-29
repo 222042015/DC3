@@ -5,7 +5,7 @@ import torch
 import sys
 import os
 sys.path.insert(1, os.path.join(sys.path[0], os.pardir, os.pardir))
-from gauge_utils import SimpleProblem
+from gauge_utils import NonconvexProblem
 
 import os
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
@@ -13,8 +13,8 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 torch.set_default_dtype(torch.float64)
 
 num_var = 100
-num_ineq = 50
-num_eq = 50
+num_ineq = 70
+num_eq = 30
 num_examples = 10000
 
 print(num_ineq, num_eq)
@@ -33,7 +33,7 @@ h = data.h_np
 
 L = np.ones((num_var))*-5
 U = np.ones((num_var))*5
-problem = SimpleProblem(Q, p, A, G, h, X, L, U)
+problem = NonconvexProblem(Q, p, A, G, h, X, L, U)
 problem.calc_Y()
 print(len(problem.Y))
 problem.remove_no_ip()
