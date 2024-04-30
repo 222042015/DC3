@@ -12,15 +12,14 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 torch.set_default_dtype(torch.float64)
 
-num_var = 100
-num_ineq = 30
-num_eq = 70
-num_examples = 1200
+num_var = 200
+num_ineq = 100
+num_eq = 100
+num_examples = 10000
 
 
-num_ineq = 50
-# for num_eq in [10, 30, 50, 70, 90]:
-for num_eq in [50]:
+num_ineq = 100
+for num_eq in [20, 60, 100, 140, 180]:
     print(num_ineq, num_eq)
     np.random.seed(17)
     Q = np.diag(np.random.random(num_var))

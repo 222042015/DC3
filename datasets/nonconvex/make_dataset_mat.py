@@ -6,6 +6,7 @@ import sys
 import os
 sys.path.insert(1, os.path.join(sys.path[0], os.pardir, os.pardir))
 from utils import NonconvexProblem
+import scipy
 
 import os
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
@@ -16,15 +17,24 @@ num_var = 200
 num_ineq = 100
 num_eq = 100
 num_examples = 10000
+print(num_ineq, num_eq)
 
+filepath = "/home/jxxiong/A-xjx/deeplde/datasets/nonconvex/random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}.mat".format(num_var, num_ineq, num_eq, num_examples)
+data = scipy.io.loadmat(filepath)
 np.random.seed(17)
+Q = data["Q"]
+p = data["p"].squeeze()
+A = data["A"]
+X = data["X"]
+G = data["G"]
+h = data["h"].squeeze()
 
-Q = np.diag(np.random.random(num_var))
-p = np.random.random(num_var)
-A = np.random.normal(loc=0, scale=1., size=(num_eq, num_var))
-X = np.random.uniform(-1, 1, size=(num_examples, num_eq))
-G = np.random.normal(loc=0, scale=1., size=(num_ineq, num_var))
-h = np.sum(np.abs(G@np.linalg.pinv(A)), axis=1)
+print(Q.shape)
+print(p.shape)
+print(A.shape)
+print(X.shape)
+print(G.shape)
+print(h.shape)
 
 problem = NonconvexProblem(Q, p, A, G, h, X)
 problem.calc_Y()

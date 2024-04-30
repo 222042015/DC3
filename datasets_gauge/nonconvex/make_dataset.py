@@ -13,9 +13,9 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 torch.set_default_dtype(torch.float64)
 
 num_var = 100
-num_ineq = 50
-num_eq = 50
-num_examples = 1200
+num_ineq = 30
+num_eq = 70
+num_examples = 10000
 
 np.random.seed(17)
 
