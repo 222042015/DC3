@@ -26,7 +26,7 @@ from utils import my_hash, str_to_bool
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
+DEVICE = "cpu"
 def main():
     parser = argparse.ArgumentParser(description='baseline_opt')
     parser.add_argument('--probType', type=str, default='nonconvex',
@@ -108,6 +108,8 @@ def main():
                 ('test_time_total', test_time_total), ('valid_time_total', valid_time_total), ('train_time_total', 0)]))
         
         print("valid eval: {:.4f}, valid time {:.4f}".format(np.mean(opt_results['valid_eval']), np.mean(opt_results['valid_time'])))
+        print("test eval: {:.4f}, test time {:.4f}".format(np.mean(opt_results['test_eval']), np.mean(opt_results['test_time'])))
+
         with open(os.path.join(save_dir, 'results.dict'), 'wb') as f:
             pickle.dump(opt_results, f)
 
