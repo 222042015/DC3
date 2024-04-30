@@ -12,9 +12,9 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 torch.set_default_dtype(torch.float64)
 
-num_var = 100
-num_ineq = 50
-num_eq = 50
+num_var = 200
+num_ineq = 100
+num_eq = 100
 num_examples = 10000
 
 print(num_ineq, num_eq)
@@ -34,8 +34,8 @@ h = data.h_np
 L = np.ones((num_var))*-5
 U = np.ones((num_var))*5
 problem = SimpleProblem(Q, p, A, G, h, X, L, U)
-problem.calc_Y()
-print(len(problem.Y))
+# problem.calc_Y()
+# print(len(problem.Y))
 problem.remove_no_ip()
 print(len(problem.Y))
 with open("./random_simple_dataset_var{}_ineq{}_eq{}_ex{}".format(num_var, num_ineq, num_eq, num_examples), 'wb') as f:

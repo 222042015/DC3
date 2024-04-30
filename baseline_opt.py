@@ -26,7 +26,7 @@ from utils import my_hash, str_to_bool
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-DEVICE = "cpu"
+
 def main():
     parser = argparse.ArgumentParser(description='baseline_opt')
     parser.add_argument('--probType', type=str, default='nonconvex',

@@ -12,9 +12,9 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 torch.set_default_dtype(torch.float64)
 
-num_var = 100
-num_ineq = 50
-num_eq = 50
+num_var = 200
+num_ineq = 100
+num_eq = 100
 num_examples = 10000
 
 print(num_ineq, num_eq)

@@ -25,8 +25,7 @@ import argparse
 from utils import my_hash, str_to_bool
 import default_args
 
-# DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-DEVICE = "cpu"
+DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='baseline_opt')
