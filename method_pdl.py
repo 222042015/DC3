@@ -279,7 +279,17 @@ def train_net(data, args, save_dir):
         torch.save(primal.state_dict(), f)
     with open(os.path.join(save_dir, 'dual_net.dict'), 'wb') as f:
         torch.save(dual.state_dict(), f)
+        
+    # save the solution into .mat file
+    with torch.no_grad():
+        primal.eval()
+        for Xtest in test_loader:
+            Xtest = Xtest[0].to(DEVICE)
+            Ytest = primal(Xtest)    
     
+    with open(os.path.join(save_dir, 'sol.dict'), 'wb') as f:
+        pickle.dump(Ytest.detach().cpu().numpy(), f)
+
     return primal, dual, stats
         
 

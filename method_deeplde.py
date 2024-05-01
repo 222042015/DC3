@@ -27,7 +27,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='DeepLDE')
-    parser.add_argument('--probType', type=str, default='nonconvex',help='problem type')
+    parser.add_argument('--probType', type=str, default='simple',help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -229,6 +229,17 @@ def train_net(data, args, save_dir):
         pickle.dump(stats, f)
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
+    
+    # save the solution into .mat file
+    with torch.no_grad():
+        solver_net.eval()
+        for Xtest in test_loader:
+            Xtest = Xtest[0].to(DEVICE)
+            Ytest = solver_net(Xtest)    
+    
+    with open(os.path.join(save_dir, 'sol.dict'), 'wb') as f:
+        pickle.dump(Ytest.detach().cpu().numpy(), f)
+    
     return solver_net, stats
 
 # Modifies stats in place

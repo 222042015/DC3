@@ -184,6 +184,20 @@ def train_net(data, args, save_dir):
         pickle.dump(stats, f)
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
+
+    # save the solution into .mat file
+    with torch.no_grad():
+        solver_net.eval()
+        for Xtest, IPtest in test_loader:
+            Xtest = Xtest.to(DEVICE)
+            IPtest = IPtest.to(DEVICE)
+            v = solver_net(Xtest, IPtest)
+            Ypartial = data.gauge_map(v, IPtest, Xtest)
+            Ytest = data.complete_partial(Xtest, Ypartial)
+    
+    with open(os.path.join(save_dir, 'sol.dict'), 'wb') as f:
+        pickle.dump(Ytest.detach().cpu().numpy(), f)
+
     return solver_net, stats
 
 # Modifies stats in place

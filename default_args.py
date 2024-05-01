@@ -262,28 +262,6 @@ def pdl_default_args(prob_type):
 
     return defaults
 
-
-def deepv_default_args(prob_type):
-    defaults = {}
-    defaults['saveAllStats'] = True
-    defaults['resultsSaveFreq'] = 50
-
-    if "acopf" in prob_type:
-        defaults['max_outer_iter'] = 100 
-        defaults['max_inner_iter'] = 250 
-        defaults['alpha'] = 2 
-        defaults['tau'] = 0.8 
-        defaults['rho_max'] = 10000
-        defaults['batchSize'] = 200
-        defaults['epochs'] = 2000
-        defaults['lr'] = 1e-3
-        defaults['hiddenSize'] = 200
-    else:
-        raise NotImplementedError
-    
-    return defaults
-
-
 def deeplde_default_args(prob_type):
     defaults = {}
     defaults['simpleVar'] = 100
