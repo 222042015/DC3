@@ -49,6 +49,8 @@ def main():
         help='total number of datapoints for nonconvex problem')
     parser.add_argument('--corrEps', type=float,
         help='correction procedure tolerance')
+    parser.add_argument('--prefix', type=str, default='/data1/jxxiong/DC3/',
+                        help='directory to the results')
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
@@ -94,8 +96,9 @@ def main():
     else:
         solvers = ['pypower']
 
+    prefix = args['prefix']
     for solver in solvers:
-        save_dir = os.path.join('results', str(data), 'baselineOpt-{}'.format(solver),
+        save_dir = os.path.join(prefix + 'results', str(data), 'baselineOpt-{}'.format(solver),
             'run', str(time.time()).replace('.', '-'))
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
