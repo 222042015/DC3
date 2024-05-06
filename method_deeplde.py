@@ -73,6 +73,8 @@ def main():
         help='initial lambda')
     parser.add_argument('--gamma', type=float,
         help='Decrements of step size')
+    parser.add_argument('--prefix', type=str, default='/data1/jxxiong/DC3/',
+                        help='directory to the results')
     
 
     args = parser.parse_args()
@@ -111,7 +113,8 @@ def main():
                 pass
     data._device = DEVICE
 
-    save_dir = os.path.join('results', str(data), 'method_deeplde', my_hash(str(sorted(list(args.items())))),
+    prefix = args['prefix']
+    save_dir = os.path.join(prefix + 'results', str(data), 'method_deeplde', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -123,6 +126,7 @@ def main():
 
 
 def train_net(data, args, save_dir):
+    print(save_dir)
     solver_step = args['lr']
     batch_size = args['batchSize']
 

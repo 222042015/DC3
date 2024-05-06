@@ -80,6 +80,8 @@ def main():
     parser.add_argument('--resultsSaveFreq', type=int,
         help='how frequently (in terms of number of epochs) to save stats to file')
 
+    parser.add_argument('--prefix', type=str, default='/data1/jxxiong/DC3/',
+                        help='directory to the results')
     args = parser.parse_args()
     args = vars(args) # change to dictionary
     defaults = default_args.method_default_args(args['probType'])
@@ -113,8 +115,9 @@ def main():
             except AttributeError:
                 pass
     data._device = DEVICE
-
-    save_dir = os.path.join('results', str(data), 'method', my_hash(str(sorted(list(args.items())))),
+    
+    prefix = args['prefix']
+    save_dir = os.path.join(prefix + 'results', str(data), 'method', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)

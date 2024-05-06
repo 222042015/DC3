@@ -60,7 +60,8 @@ def main():
         help='correction procedure tolerance')
     parser.add_argument('--epochs', type=int, 
                         help='number of iterations for training')
-    
+    parser.add_argument('--prefix', type=str, default='/data1/jxxiong/DC3/',
+                        help='directory to the results')
 
     args = parser.parse_args()
     args = vars(args) # change to dictionary
@@ -94,7 +95,8 @@ def main():
                 pass
     data._device = DEVICE
 
-    save_dir = os.path.join('results', str(data), 'method_gauge', my_hash(str(sorted(list(args.items())))),
+    prefix = args['prefix']
+    save_dir = os.path.join(prefix + 'results', str(data), 'method_gauge', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
