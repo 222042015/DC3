@@ -24,9 +24,9 @@ def baseline_nn_default_args(prob_type):
     defaults['simpleIneq'] = 50
     defaults['simpleEq'] = 50
     defaults['simpleEx'] = 10000
-    defaults['nonconvexVar'] = 100
-    defaults['nonconvexIneq'] = 50
-    defaults['nonconvexEq'] = 50
+    defaults['nonconvexVar'] = 200
+    defaults['nonconvexIneq'] = 100
+    defaults['nonconvexEq'] = 100
     defaults['nonconvexEx'] = 10000
     defaults['saveAllStats'] = True
     defaults['resultsSaveFreq'] = 50
@@ -38,7 +38,7 @@ def baseline_nn_default_args(prob_type):
         defaults['hiddenSize'] = 200
         defaults['softWeight'] = 100
         defaults['softWeightEqFrac'] = 0.5
-        defaults['useTestCorr'] = True
+        defaults['useTestCorr'] = False
         defaults['corrTestMaxSteps'] = 10
         defaults['corrEps'] = 1e-4
         defaults['corrLr'] = 1e-7
@@ -223,27 +223,27 @@ def pdl_default_args(prob_type):
     defaults['saveAllStats'] = True
     defaults['resultsSaveFreq'] = 1
 
-    if prob_type == "simple":
+    if prob_type == "simple" or prob_type == "convex_qcqp":
         defaults['max_outer_iter'] = 10 # K
         defaults['max_inner_iter'] = 500 #L
-        defaults['alpha'] = 10 # alpha
+        defaults['alpha'] = 5 #10 # alpha
         defaults['tau'] = 0.8 # tau
         defaults['rho_max'] = 5000
         defaults['batchSize'] = 200
         defaults['lr'] = 1e-4
         defaults['hiddenSize'] = 500
-        defaults['rho'] = 0.5 # initialize
+        defaults['rho'] = 2 #0.5 # initialize
         defaults['v'] = 0 # initialize the current maximum violations
     elif prob_type == "nonconvex":
         defaults['max_outer_iter'] = 10 
         defaults['max_inner_iter'] = 500
-        defaults['alpha'] = 10 
+        defaults['alpha'] = 5 #10 
         defaults['tau'] = 0.8 
         defaults['rho_max'] = 5000
         defaults['batchSize'] = 200
         defaults['lr'] = 1e-4
         defaults['hiddenSize'] = 500
-        defaults['rho'] = 0.5 
+        defaults['rho'] = 2 #0.5 
         defaults['v'] = 0 
     elif "acopf" in prob_type:
         defaults['max_outer_iter'] = 100 
@@ -296,7 +296,7 @@ def deeplde_default_args(prob_type):
         defaults['inner_iter'] = 25
         defaults['outer_iter'] = 15
         defaults['beta'] = 5
-        defaults['rho'] = 0.1
+        defaults['rho'] = 0.0001
         defaults['lambda'] = 0.1
         defaults['gamma'] = 0.01
     elif prob_type == 'acopf57':

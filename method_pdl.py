@@ -22,12 +22,13 @@ import argparse
 
 from utils import my_hash, str_to_bool
 import default_args
+from qcqp_utils import QCQPProbem
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='pdl')
-    parser.add_argument('--probType', type=str, default='simple',help='problem type')
+    parser.add_argument('--probType', type=str, default='convex_qcqp',help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -90,19 +91,34 @@ def main():
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif 'acopf' in prob_type:
         filepath = os.path.join('datasets', 'acopf', prob_type + '_dataset')
+    elif prob_type == 'convex_qcqp':
+        filepath = os.path.join('datasets', 'convex_qcqp', "random_{}_{}_dataset_var{}_ineq{}_eq{}_ex{}".format(
+            2023, prob_type, args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
+        with open(filepath, 'rb') as f:
+            dataset = pickle.load(f)
+        data = QCQPProbem(dataset, 833)
+        data.device = DEVICE
+        for attr in dir(data):
+            var = getattr(data, attr)
+            if torch.is_tensor(var):
+                try:
+                    setattr(data, attr, var.to(DEVICE))
+                except AttributeError:
+                    pass
     else:
         raise NotImplementedError
     # read the data and transfer to GPU
-    with open(filepath, 'rb') as f:
-        data = pickle.load(f)
-    for attr in dir(data):
-        var = getattr(data, attr)
-        if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
-            try:
-                setattr(data, attr, var.to(DEVICE))
-            except AttributeError:
-                pass
-    data._device = DEVICE
+    if prob_type != 'convex_qcqp':
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        for attr in dir(data):
+            var = getattr(data, attr)
+            if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+                try:
+                    setattr(data, attr, var.to(DEVICE))
+                except AttributeError:
+                    pass
+        data._device = DEVICE
 
     print("number of samples: {}".format(data.num))
 
@@ -377,7 +393,7 @@ def update_rho(data, primal, dual, args):
     alpha = args['alpha']
     eq_resid = data.eq_resid(X, Y)
     ineq_resid = data.ineq_resid(X, Y)
-    lam = duals[:, data.neq:]
+    lam = duals[:, data.nineq:]
     # let sigma be the larger value of each element of lam and eq_norm
     sigma = torch.max(-lam/rho, ineq_resid)
     v = torch.max(torch.max(torch.norm(eq_resid, dim=1, p=float('inf')), torch.norm(sigma, dim=1, p=float('inf')))).detach().cpu().numpy()
