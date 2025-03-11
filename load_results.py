@@ -5,7 +5,9 @@ import numpy as np
 # Load and save experiment status and summary stats
 #   Assumes set of experiments and flag settings used in run_expers.sh
 def main():
-    exper_dirs = get_experiment_dirs('results')
+    # prefix = "/data1/jxxiong/DC3/"
+    prefix = ""
+    exper_dirs = get_experiment_dirs(prefix + 'results')
     num_running_done, all_stats = get_status_results(exper_dirs)
     with open('exper_status.dict', 'wb') as f:
         pickle.dump(num_running_done, f)
@@ -35,8 +37,15 @@ def get_experiment_dirs(path_prefix):
 
     # exper_dirs['acopf'] = 'ACOPF-57-0-0.5-0.7-0.0833-0.0833'
     
-    exper_dirs['simple_ineq{}_eq{}'.format(50, 50)] = 'SimpleProblem-100-{}-{}-1200'.format(50, 50)
-    exper_dirs['nonconvex_ineq{}_eq{}'.format(50, 50)] = 'NonconvexProblem-100-{}-{}-1200'.format(50, 50)
+    exper_dirs['simple_ineq{}_eq{}'.format(50, 50)] = 'SimpleProblem-100-{}-{}-10000'.format(50, 50)
+    exper_dirs['nonconvex_ineq{}_eq{}'.format(50, 50)] = 'NonconvexProblem-100-{}-{}-10000'.format(50, 50)
+    exper_dirs['simple_ineq{}_eq{}'.format(100, 100)] = 'SimpleProblem-200-{}-{}-10000'.format(100, 100)
+    exper_dirs['nonconvex_ineq{}_eq{}'.format(100, 100)] = 'NonconvexProblem-200-{}-{}-10000'.format(100, 100)
+    exper_dirs['qcqp_ineq{}_eq{}'.format(50, 50)] = 'QCQPProblem-100-{}-{}-10000'.format(50, 50)
+    exper_dirs['qcqp_ineq{}_eq{}'.format(100, 100)] = 'QCQPProblem-200-{}-{}-10000'.format(100, 100)
+    
+    # exper_dirs['simple_ineq{}_eq{}'.format(50, 50)] = 'SimpleProblem-100-{}-{}-10000'.format(50, 50)
+
 
 
     for key in exper_dirs.keys():
@@ -51,10 +60,10 @@ def get_status_results(exper_dirs):
     all_stats = {}
 
     opt_methods = dict([
-            ('simple', ['osqp', 'qpth']), ('nonconvex', ['ipopt']), ('acopf', ['pypower'])
+            ('simple', ['osqp', 'qpth']), ('nonconvex', ['ipopt']), ('acopf', ['pypower']), ('qcqp', ['ipopt'])
     ])
     nn_baseline_dirs = [('baseline_nn', 'baselineNN'), ('baseline_eq_nn', 'baselineEqNN')] \
-        + [('method_deeplde', 'method_deeplde'), ('method_pdl', 'method_pdl'), ('method_gauge', 'method_gauge')]
+        + [('method_deeplde', 'method_deeplde'), ('method_pdl', 'method_pdl'), ('method_gauge', 'method_gauge'), ('NN_EqH_Bis', 'NN_EqH_Bis')]
 
     for exper, exper_dir in exper_dirs.items():
         print(exper)
@@ -71,6 +80,10 @@ def get_status_results(exper_dirs):
             dir_method_map = get_dc3_path_mapping(method_path)
 
             # baselines
+            # if 'qcqp' in exper:
+            #     all_methods_dirs = nn_baseline_dirs
+            # else:
+            #     
             all_methods_dirs = nn_baseline_dirs + \
                 [('baseline_opt_{}'.format(x), 'baselineOpt-{}'.format(x)) for x in \
                     opt_methods[exper.split('_')[0]]]
@@ -167,13 +180,16 @@ def check_running_done(path, is_opt=False):
                 with open(os.path.join(path, 'stats.dict'), 'rb') as f:
                     stats = pickle.load(f)
                 if "method_pdl" in path:
-                    is_done = (len(stats['valid_time']) >= 1500)
+                    # is_done = (len(stats['valid_time']) >= 1500)
+                    is_done = (len(stats['test_time']) >= 1500)
                 elif "method_gauge" in path:
-                    is_done = (len(stats['valid_time']) >= 2000)
+                    is_done = (len(stats['test_time']) >= 2000)
+                elif 'NN_EqH_Bis' in path:
+                    is_done = True
                 else:
-                    is_done = (len(stats['valid_time']) == 1000)
+                    is_done = (len(stats['test_time']) == 1000)
                 if not is_done:
-                    print(len(stats['valid_time']))
+                    print(len(stats['test_time']))
         except Exception as e:
             print(str(e))
             is_done = False

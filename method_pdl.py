@@ -68,7 +68,7 @@ def main():
     parser.add_argument('--rho', type=float)
     parser.add_argument('--v', type=float)
     
-    parser.add_argument('--prefix', type=str, default='/data1/jxxiong/DC3/',
+    parser.add_argument('--prefix', type=str, default='', #'/data1/jxxiong/DC3/',
                         help='directory to the results')
 
     args = parser.parse_args()

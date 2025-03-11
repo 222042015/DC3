@@ -22,12 +22,13 @@ import argparse
 
 from utils import my_hash, str_to_bool
 import default_args
+from qcqp_utils import QCQPProbem
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='DeepLDE')
-    parser.add_argument('--probType', type=str, default='simple',help='problem type')
+    parser.add_argument('--probType', type=str, default='convex_qcqp',help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -73,7 +74,7 @@ def main():
         help='initial lambda')
     parser.add_argument('--gamma', type=float,
         help='Decrements of step size')
-    parser.add_argument('--prefix', type=str, default='/data1/jxxiong/DC3/',
+    parser.add_argument('--prefix', type=str, default='', #'/data1/jxxiong/DC3/',
                         help='directory to the results')
     
 
@@ -99,19 +100,48 @@ def main():
     elif prob_type[:5] == 'acopf':
         filepath = os.path.join('datasets', 'acopf', prob_type + '_dataset')
         # filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
+    elif prob_type == 'convex_qcqp':
+        filepath = os.path.join('datasets', 'convex_qcqp', "random_{}_{}_dataset_var{}_ineq{}_eq{}_ex{}".format(
+            2023, prob_type, args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
+        with open(filepath, 'rb') as f:
+            dataset = pickle.load(f)
+        data = QCQPProbem(dataset, 833)
+        data.device = DEVICE
+        for attr in dir(data):
+            var = getattr(data, attr)
+            if torch.is_tensor(var):
+                try:
+                    setattr(data, attr, var.to(DEVICE))
+                except AttributeError:
+                    pass
     else:
         raise NotImplementedError
+    
     # read the data and transfer to GPU
-    with open(filepath, 'rb') as f:
-        data = pickle.load(f)
-    for attr in dir(data):
-        var = getattr(data, attr)
-        if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
-            try:
-                setattr(data, attr, var.to(DEVICE))
-            except AttributeError:
-                pass
-    data._device = DEVICE
+    if prob_type != 'convex_qcqp':
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        for attr in dir(data):
+            var = getattr(data, attr)
+            if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+                try:
+                    setattr(data, attr, var.to(DEVICE))
+                except AttributeError:
+                    pass
+        data._device = DEVICE
+    # else:
+    #     raise NotImplementedError
+    # # read the data and transfer to GPU
+    # with open(filepath, 'rb') as f:
+    #     data = pickle.load(f)
+    # for attr in dir(data):
+    #     var = getattr(data, attr)
+    #     if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+    #         try:
+    #             setattr(data, attr, var.to(DEVICE))
+    #         except AttributeError:
+    #             pass
+    # data._device = DEVICE
 
     prefix = args['prefix']
     save_dir = os.path.join(prefix + 'results', str(data), 'method_deeplde', my_hash(str(sorted(list(args.items())))),

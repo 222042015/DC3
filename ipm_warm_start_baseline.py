@@ -13,6 +13,9 @@ from scipy.sparse import csc_matrix
 
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
+dataset_path = "/home/jxxiong/A-xjx/deeplde/datasets/"
+baseline_sol_path = "/home/jxxiong/A-xjx/deeplde/baseline_sols/"
+
 
 class General_QP(object):
     """
@@ -583,7 +586,7 @@ class General_QP(object):
 
         return sols, total_time, parallel_time, np.array(iters).mean()
 
-    def warm_start_baseline(self, solver_type='ipopt', tol=1e-4, baseline_method="gauge", problem_type="Simple", num_var=100, num_ineq=50, num_eq=50, sol_path="/home/jxxiong/A-xjx/deeplde/baseline_sols/"):
+    def warm_start_baseline(self, solver_type='ipopt', tol=1e-4, baseline_method="gauge", problem_type="Simple", num_var=100, num_ineq=50, num_eq=50, sol_path=baseline_sol_path):
         sol_path = os.path.join(sol_path, "_".join([baseline_method, problem_type, str(num_var), str(num_ineq), str(num_eq)]))
         # Y0 = torch.tensor(sio.loadmat(sol_path)['x'], device=self.device, dtype=torch.float32)
         try:
@@ -596,25 +599,21 @@ class General_QP(object):
             g0 = torch.tensor(result['mu'], device=self.device, dtype=torch.float32)
         else:
             Y0 = torch.tensor(result['x'], device=self.device, dtype=torch.float32)
-        # ineq_resid = torch.bmm(self.G, Y0.unsqueeze(-1)).squeeze(-1) - self.c
-        # eq_resid = torch.bmm(self.A, Y0.unsqueeze(-1)).squeeze(-1) - self.b
-        ineq_dist = self.ineq_dist(Y0.unsqueeze(-1), G=self.G, c=self.c)
-        eq_dist = self.eq_dist(Y0.unsqueeze(-1), A=self.A, b=self.b)
+        ineq_resid = torch.bmm(self.G, Y0.unsqueeze(-1)).squeeze(-1) - self.c
+        eq_resid = torch.bmm(self.A, Y0.unsqueeze(-1)).squeeze(-1) - self.b
         print("========== Baseline Method: {} ==========".format(baseline_method))
-        print('Initial ineq residual: ', ineq_dist.max(dim=1).values.mean().detach().cpu().numpy())
-        print('Initial eq residual: ', eq_dist.abs().max().cpu().numpy())
+        print('Initial ineq residual: ', ineq_resid.max().cpu().numpy())
+        print('Initial eq residual: ', eq_resid.abs().max().cpu().numpy())
         # sols, total_time, parallel_time, avg_iter = self.opt_solve(solver_type=solver_type, initial_y=Y0)
         if baseline_method == "pdl":
             sols, total_time, parallel_time, avg_iter = self.opt_solve(solver_type=solver_type, initial_y=Y0, init_g=g0)
         else:
             sols, total_time, parallel_time, avg_iter = self.opt_solve(solver_type=solver_type, initial_y=Y0)
         sols = torch.tensor(sols, device=self.device, dtype=torch.float32)
-        # ineq_resid = torch.bmm(self.G, sols.unsqueeze(-1)).squeeze(-1) - self.c
-        # eq_resid = torch.bmm(self.A, sols.unsqueeze(-1)).squeeze(-1) - self.b
-        ineq_dist = self.ineq_dist(sols.unsqueeze(-1), G=self.G, c=self.c)
-        eq_dist = self.eq_dist(sols.unsqueeze(-1), A=self.A, b=self.b)
-        print('Final ineq residual: ', ineq_dist.max().cpu().numpy())
-        print('Final eq residual: ', eq_dist.abs().max().cpu().numpy())
+        ineq_resid = torch.bmm(self.G, sols.unsqueeze(-1)).squeeze(-1) - self.c
+        eq_resid = torch.bmm(self.A, sols.unsqueeze(-1)).squeeze(-1) - self.b
+        print('Final ineq residual: ', ineq_resid.max().cpu().numpy())
+        print('Final eq residual: ', eq_resid.abs().max().cpu().numpy())
         print('Total time: ', total_time)
         print('Parallel time: ', parallel_time)
         print('Average iteration: ', avg_iter)
@@ -927,7 +926,7 @@ class Nonconvex_Op_DC3(object):
 
         return sols, total_time, parallel_time, np.array(iters).mean()
     
-    def warm_start_baseline(self, solver_type='ipopt', tol=1e-4, baseline_method="gauge", problem_type="Simple", num_var=100, num_ineq=50, num_eq=50, sol_path="/home/jxxiong/A-xjx/deeplde/baseline_sols/"):
+    def warm_start_baseline(self, solver_type='ipopt', tol=1e-4, baseline_method="gauge", problem_type="Simple", num_var=100, num_ineq=50, num_eq=50, sol_path=baseline_sol_path):
         sol_path = os.path.join(sol_path, "_".join([baseline_method, problem_type, str(num_var), str(num_ineq), str(num_eq)]))
         try:
             result = sio.loadmat(sol_path)
@@ -1003,7 +1002,7 @@ class QCQP(object):
                    Ax = b
 
     """
-    def __init__(self, prob_type, learning_type, val_frac=0.0833, test_frac=0.0833, device='cuda:0', seed=17, **kwargs):
+    def __init__(self, prob_type, learning_type, val_frac=0.0833, test_frac=0.0833, device='cuda:0', seed=2023, **kwargs):
         super().__init__()
 
         self.device = device
@@ -1374,6 +1373,11 @@ class QCQP(object):
                     torch.bmm(G[:, i, :].unsqueeze(-1).permute(0, 2, 1), x) - c[:,i,:].unsqueeze(-1)
                 res.append(resi)
             return torch.concat(res, dim=1)
+            # x = x.squeeze(-1)
+            # q = torch.matmul(self.Q_ineq, x.T).permute(2, 0, 1)
+            # q = (q * x.view(x.shape[0], 1, -1)).sum(-1)
+            # res = q + torch.matmul(x, G[0].T) - c[0].squeeze(-1)
+            # return res
 
     def ineq_dist(self, x, **kwargs):
         Q_ineq = kwargs.get('Q_ineq', self.Q_ineq)
@@ -1739,7 +1743,7 @@ class QCQP(object):
 
         return sols, total_time, parallel_time, np.array(iters).mean()
 
-    def warm_start_baseline(self, solver_type='ipopt', tol=1e-4, baseline_method="gauge", problem_type="Simple", num_var=100, num_ineq=50, num_eq=50, sol_path="/home/jxxiong/A-xjx/deeplde/baseline_sols/"):
+    def warm_start_baseline(self, solver_type='ipopt', tol=1e-4, baseline_method="gauge", problem_type="Simple", num_var=100, num_ineq=50, num_eq=50, sol_path=baseline_sol_path):
         sol_path = os.path.join(sol_path, "_".join([baseline_method, problem_type, str(num_var), str(num_ineq), str(num_eq)]))
         try:
             result = sio.loadmat(sol_path)
@@ -1757,7 +1761,7 @@ class QCQP(object):
         eq_dist = self.eq_dist(Y0.unsqueeze(-1), Q_eq=self.Q_eq, A=self.A, b=self.b)
         print("========== Baseline Method: {} ==========".format(baseline_method))
         print('Initial ineq residual: ', ineq_dist.max(dim=1).values.mean().detach().cpu().numpy())
-        print('Initial eq residual: ', eq_dist.abs().max().cpu().numpy())
+        print('Initial eq residual: ', eq_dist.max(dim=1).values.mean().cpu().numpy())
         if baseline_method == "pdl":
             sols, total_time, parallel_time, avg_iter = self.opt_solve(solver_type=solver_type, initial_y=Y0, init_g=g0)
         else:
@@ -1769,7 +1773,7 @@ class QCQP(object):
         ineq_dist = self.ineq_dist(sols.unsqueeze(-1), Q_ineq=self.Q_ineq, G=self.G, c=self.c)
         eq_dist = self.eq_dist(sols.unsqueeze(-1), Q_eq=self.Q_eq, A=self.A, b=self.b)
         print('Final ineq residual: ', ineq_dist.max().cpu().numpy())
-        print('Final eq residual: ', eq_dist.abs().max().cpu().numpy())
+        print('Final eq residual: ', eq_dist.max().cpu().numpy())
         print('Total time: ', total_time)
         print('Parallel time: ', parallel_time)
         print('Average iteration: ', avg_iter)
@@ -1856,11 +1860,11 @@ class convex_qcqp_ipopt(ipopt.Problem):
         self.mus.append(mu)
 
 if __name__ == "__main__":
-    # problem_type_list = ["SimpleProblem", "NonconvexProblem"]#, "QCQPProblem"]
-    # problem_size_list = [[200, 100, 100], [100, 50, 50]]
+    problem_type_list = ["SimpleProblem", "NonconvexProblem", "QCQPProblem"]
+    problem_size_list = [[100, 50, 50], [200, 100, 100]]
     num_example = 10000
     problem_type_list = ['QCQPProblem']
-    problem_size_list = [[100, 50, 50]]
+    # problem_size_list = [[200, 100, 100]]
     
     for problem_type in problem_type_list:
         for problem_size in problem_size_list:
@@ -1868,19 +1872,19 @@ if __name__ == "__main__":
             num_ineq = problem_size[1]
             num_eq = problem_size[2]
             if problem_type == "SimpleProblem":    
-                data = General_QP("QP_DC3", learning_type="test", file_path="/home/jxxiong/A-xjx/deeplde/datasets/simple/random_simple_dataset_var{}_ineq{}_eq{}_ex{}.mat".format(num_var, num_ineq, num_eq, num_example))
+                data = General_QP("QP_DC3", learning_type="test", file_path=dataset_path + "simple/random_simple_dataset_var{}_ineq{}_eq{}_ex{}.mat".format(num_var, num_ineq, num_eq, num_example))
             elif problem_type == "NonconvexProblem":
                 data = Nonconvex_Op_DC3(num_var=num_var, num_eq=num_eq, num_ineq=num_ineq, data_size=10000, learning_type="test")
             elif problem_type == "QCQPProblem":
-                data = QCQP("QCQP_H_proj", learning_type="test", file_path="/home/jxxiong/A-xjx/deeplde/datasets/convex_qcqp/random_convex_qcqp_dataset_var{}_ineq{}_eq{}_ex{}.mat".format(num_var, num_ineq, num_eq, num_example))
+                data = QCQP("QCQP_H_proj", learning_type="test", file_path=dataset_path + "convex_qcqp/random_convex_qcqp_dataset_var{}_ineq{}_eq{}_ex{}.mat".format(num_var, num_ineq, num_eq, num_example))
             else:
                 raise NotImplementedError
     
             total_time = []
             parallel_time = []
             avg_iter = []
-            method_list = ["deeplde", "EqH_Bis", "gauge", "pdl", "DC3"]
-            # method_list = ["pdl"]
+            # method_list = ["deeplde", "EqH_Bis", "gauge", "pdl", "DC3", "NN"]
+            method_list = ["DC3"]
             for baseline_method in method_list:
                 tt, pt, ai = data.warm_start_baseline(solver_type="ipopt", baseline_method=baseline_method, problem_type=problem_type, num_var=num_var, num_ineq=num_ineq, num_eq=num_eq)
                 total_time.append(tt)
@@ -1889,5 +1893,5 @@ if __name__ == "__main__":
 
             # save the results as a dataframe
             df = pd.DataFrame({"Method": method_list, "Total Time": total_time, "Parallel Time": parallel_time, "Average Iteration": avg_iter})
-            df.to_csv("/home/jxxiong/A-xjx/deeplde/baseline_sols/warmstart_{}_var{}_ineq{}_eq{}_ex{}.csv".format(problem_type, num_var, num_ineq, num_eq, num_example))                      
+            df.to_csv(baseline_sol_path + "warmstart_{}_var{}_ineq{}_eq{}_ex{}.csv".format(problem_type, num_var, num_ineq, num_eq, num_example))                      
     

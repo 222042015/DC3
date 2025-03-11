@@ -1,8 +1,8 @@
-try:
-    import waitGPU
-    waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
-except ImportError:
-    pass
+# try:
+#     import waitGPU
+#     waitGPU.wait(utilization=50, memory_ratio=0.5, available_memory=5000, interval=9, nproc=1, ngpu=1)
+# except ImportError:
+#     pass
 
 import torch
 import torch.nn as nn
@@ -27,7 +27,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='baseline_nn')
-    parser.add_argument('--probType', type=str, default='acopf57',
+    parser.add_argument('--probType', type=str, default='simple',
         choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -194,6 +194,16 @@ def train_net(data, args, save_dir):
         pickle.dump(stats, f)
     with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
         torch.save(solver_net.state_dict(), f)
+        
+    # save the solution into .mat file
+    with torch.no_grad():
+        solver_net.eval()
+        for Xtest in test_loader:
+            Xtest = Xtest[0].to(DEVICE)
+            Ytest = solver_net(Xtest)    
+    
+    with open(os.path.join(save_dir, 'sol.dict'), 'wb') as f:
+        pickle.dump(Ytest.detach().cpu().numpy(), f)
 
     return solver_net, stats
 

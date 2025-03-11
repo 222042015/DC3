@@ -22,12 +22,14 @@ import argparse
 
 from utils import my_hash, str_to_bool
 import default_args
+from qcqp_utils import QCQPProbem
+
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
-    parser.add_argument('--probType', type=str, default='simple',
+    parser.add_argument('--probType', type=str, default='convex_qcqp',
         choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
@@ -80,7 +82,7 @@ def main():
     parser.add_argument('--resultsSaveFreq', type=int,
         help='how frequently (in terms of number of epochs) to save stats to file')
 
-    parser.add_argument('--prefix', type=str, default='/data1/jxxiong/DC3/',
+    parser.add_argument('--prefix', type=str, default='', #'/data1/jxxiong/DC3/',
                         help='directory to the results')
     args = parser.parse_args()
     args = vars(args) # change to dictionary
@@ -102,19 +104,46 @@ def main():
             args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     elif prob_type == 'acopf57':
         filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
+    elif prob_type == 'convex_qcqp':
+        filepath = os.path.join('datasets', 'convex_qcqp', "random_{}_{}_dataset_var{}_ineq{}_eq{}_ex{}".format(
+            2023, prob_type, args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
+        with open(filepath, 'rb') as f:
+            dataset = pickle.load(f)
+        data = QCQPProbem(dataset, 833)
+        data.device = DEVICE
+        for attr in dir(data):
+            var = getattr(data, attr)
+            if torch.is_tensor(var):
+                try:
+                    setattr(data, attr, var.to(DEVICE))
+                except AttributeError:
+                    pass
     else:
         raise NotImplementedError
+    
+    # read the data and transfer to GPU
+    if prob_type != 'convex_qcqp':
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        for attr in dir(data):
+            var = getattr(data, attr)
+            if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+                try:
+                    setattr(data, attr, var.to(DEVICE))
+                except AttributeError:
+                    pass
+        data._device = DEVICE
 
-    with open(filepath, 'rb') as f:
-        data = pickle.load(f)
-    for attr in dir(data):
-        var = getattr(data, attr)
-        if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
-            try:
-                setattr(data, attr, var.to(DEVICE))
-            except AttributeError:
-                pass
-    data._device = DEVICE
+    # with open(filepath, 'rb') as f:
+    #     data = pickle.load(f)
+    # for attr in dir(data):
+    #     var = getattr(data, attr)
+    #     if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+    #         try:
+    #             setattr(data, attr, var.to(DEVICE))
+    #         except AttributeError:
+    #             pass
+    # data._device = DEVICE
     
     prefix = args['prefix']
     save_dir = os.path.join(prefix + 'results', str(data), 'method', my_hash(str(sorted(list(args.items())))),
@@ -150,10 +179,10 @@ def train_net(data, args, save_dir):
         epoch_stats = {}
 
         # Get valid loss
-        solver_net.eval()
-        for Xvalid in valid_loader:
-            Xvalid = Xvalid[0].to(DEVICE)
-            eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
+        # solver_net.eval()
+        # for Xvalid in valid_loader:
+        #     Xvalid = Xvalid[0].to(DEVICE)
+        #     eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
 
         # Get test loss
         solver_net.eval()
@@ -176,12 +205,18 @@ def train_net(data, args, save_dir):
             dict_agg(epoch_stats, 'train_loss', train_loss.detach().cpu().numpy())
             dict_agg(epoch_stats, 'train_time', train_time, op='sum')
 
+        # print(
+        #     'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}'.format(
+        #         i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
+        #         np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
+        #         np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
+        #         np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time'])))
         print(
             'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}'.format(
-                i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
-                np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
-                np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
-                np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time'])))
+                i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['test_eval']),
+                np.mean(epoch_stats['test_dist']), np.mean(epoch_stats['test_ineq_max']),
+                np.mean(epoch_stats['test_ineq_mean']), np.mean(epoch_stats['test_ineq_num_viol_0']),
+                np.mean(epoch_stats['test_eq_max']), np.mean(epoch_stats['test_steps']), np.mean(epoch_stats['test_time'])))
 
         if args['saveAllStats']:
             if i == 0:
@@ -344,21 +379,20 @@ def grad_steps_all(data, X, Y, args):
         old_Y_step = 0
         old_ineq_step = 0
         old_eq_step = 0
-        with torch.no_grad():
-            while (i == 0 or torch.max(torch.abs(data.eq_resid(X, Y_new))) > eps_converge or
-                           torch.max(data.ineq_dist(X, Y_new)) > eps_converge) and i < max_steps:
-                if partial_corr:
-                    Y_step = data.ineq_partial_grad(X, Y_new)
-                else:
-                    ineq_step = data.ineq_grad(X, Y_new)
-                    eq_step = data.eq_grad(X, Y_new)
-                    Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
-                
-                new_Y_step = lr * Y_step + momentum * old_Y_step
-                Y_new = Y_new - new_Y_step
-
-                old_Y_step = new_Y_step
-                i += 1
+        # with torch.no_grad():
+        while (i == 0 or torch.max(torch.abs(data.eq_resid(X, Y_new))) > eps_converge or
+                       torch.max(data.ineq_dist(X, Y_new)) > eps_converge) and i < max_steps:
+            if partial_corr:
+                Y_step = data.ineq_partial_grad(X, Y_new)
+            else:
+                ineq_step = data.ineq_grad(X, Y_new)
+                eq_step = data.eq_grad(X, Y_new)
+                Y_step = (1 - args['softWeightEqFrac']) * ineq_step + args['softWeightEqFrac'] * eq_step
+            
+            new_Y_step = lr * Y_step + momentum * old_Y_step
+            Y_new = Y_new - new_Y_step
+            old_Y_step = new_Y_step
+            i += 1
 
         return Y_new, i
     else:

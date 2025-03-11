@@ -1,0 +1,21 @@
+sleep 20
+python method.py --probType simple
+python baseline_opt.py --probType simple
+python method_deeplde.py --probType simple
+python method_pdl.py --probType simple
+python method_gauge.py --probType simple
+python method.py --probType simple --simpleVar 200 --simpleIneq 100 --simpleEq 100
+python baseline_opt.py --probType simple --simpleVar 200 --simpleIneq 100 --simpleEq 100
+python method_deeplde.py --probType simple --simpleVar 200 --simpleIneq 100 --simpleEq 100
+python method_pdl.py --probType simple --simpleVar 200 --simpleIneq 100 --simpleEq 100
+python method_gauge.py --probType simple --simpleVar 200 --simpleIneq 100 --simpleEq 100
+python method.py --probType nonconvex
+python baseline_opt.py --probType nonconvex
+python method_deeplde.py --probType nonconvex
+python method_pdl.py --probType nonconvex
+python method_gauge.py --probType nonconvex
+python method.py --probType nonconvex --nonconvexVar 200 --nonconvexIneq 100 --nonconvexEq 100
+python baseline_opt.py --probType nonconvex --nonconvexVar 200 --nonconvexIneq 100 --nonconvexEq 100
+python method_deeplde.py --probType nonconvex --nonconvexVar 200 --nonconvexIneq 100 --nonconvexEq 100
+python method_pdl.py --probType nonconvex --nonconvexVar 200 --nonconvexIneq 100 --nonconvexEq 100
+python method_gauge.py --probType nonconvex --nonconvexVar 200 --nonconvexIneq 100 --nonconvexEq 100
