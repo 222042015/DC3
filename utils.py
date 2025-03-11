@@ -110,6 +110,10 @@ class SimpleProblem:
     @property
     def Y(self):
         return self._Y
+    
+    # add the Y to the problem
+    def set_Y(self, Y):
+        self._Y = torch.tensor(Y)
 
     @property
     def partial_vars(self):
