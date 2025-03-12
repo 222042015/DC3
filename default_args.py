@@ -140,11 +140,11 @@ def method_default_args(prob_type):
     defaults['resultsSaveFreq'] = 50
 
     if prob_type == 'simple':
-        defaults['epochs'] = 5000
+        defaults['epochs'] = 50000
         defaults['batchSize'] = 200
         defaults['lr'] = 1e-4
-        defaults['hiddenSize'] = 200
-        defaults['softWeight'] = 10          # use 100 if useCompl=False
+        defaults['hiddenSize'] = 500
+        defaults['softWeight'] = 100          # use 100 if useCompl=False
         defaults['softWeightEqFrac'] = 0.5
         defaults['useCompl'] = True
         defaults['useTrainCorr'] = True
@@ -152,8 +152,8 @@ def method_default_args(prob_type):
         defaults['corrMode'] = 'partial'    # use 'full' if useCompl=False
         defaults['corrTrainSteps'] = 10
         defaults['corrTestMaxSteps'] = 10
-        defaults['corrEps'] = 1e-4
-        defaults['corrLr'] = 1e-7
+        defaults['corrEps'] = 1e-5
+        defaults['corrLr'] = 1e-9
         defaults['corrMomentum'] = 0.5
     else:
         raise NotImplementedError
@@ -167,7 +167,7 @@ def pdl_default_args(prob_type):
     defaults['simpleVar'] = 100
     defaults['simpleIneq'] = 50
     defaults['simpleEq'] = 50
-    defaults['simpleEx'] = 10000
+    defaults['simpleEx'] = 1000
     defaults['nonconvexVar'] = 100
     defaults['nonconvexIneq'] = 50
     defaults['nonconvexEq'] = 50
@@ -175,16 +175,16 @@ def pdl_default_args(prob_type):
     defaults['saveAllStats'] = True
     defaults['resultsSaveFreq'] = 1
 
-    if prob_type == "simple" or prob_type == "convex_qcqp":
-        defaults['max_outer_iter'] = 10 # K
+    if prob_type == "simple":
+        defaults['max_outer_iter'] = 100 # K
         defaults['max_inner_iter'] = 500 #L
-        defaults['alpha'] = 5 #10 # alpha
+        defaults['alpha'] = 10 #10 # alpha
         defaults['tau'] = 0.8 # tau
         defaults['rho_max'] = 5000
         defaults['batchSize'] = 200
-        defaults['lr'] = 1e-4
+        defaults['lr'] = 1e-3
         defaults['hiddenSize'] = 500
-        defaults['rho'] = 2 #0.5 # initialize
+        defaults['rho'] = 0.5 #0.5 # initialize
         defaults['v'] = 0 # initialize the current maximum violations
     else:
         raise NotImplementedError
@@ -192,67 +192,12 @@ def pdl_default_args(prob_type):
 
     return defaults
 
-def deeplde_default_args(prob_type):
-    defaults = {}
-    defaults['simpleVar'] = 100
-    defaults['simpleIneq'] = 50
-    defaults['simpleEq'] = 50
-    defaults['simpleEx'] = 10000
-    defaults['nonconvexVar'] = 100
-    defaults['nonconvexIneq'] = 50
-    defaults['nonconvexEq'] = 50
-    defaults['nonconvexEx'] = 10000
-    defaults['saveAllStats'] = True
-    defaults['resultsSaveFreq'] = 50
-    defaults['useCompl'] = True
-    defaults['corrEps'] = 1e-4
-
-    if prob_type == 'simple':
-        defaults['batchSize'] = 200
-        defaults['lr'] = 1e-3 #1e-3
-        defaults['hiddenSize'] = 200
-        defaults['inner_warmstart'] = 100
-        defaults['inner_iter'] = 25
-        defaults['outer_iter'] = 15
-        defaults['beta'] = 5
-        defaults['rho'] = 0.1 # 0.0001 ineq30eq70, 1e-3 ineq70eq30
-        defaults['lambda'] = 0.1 # 1e-2 ineq50eq50, 0.1 ineq30eq70, 0.1 ineq70eq30
-        defaults['gamma'] = 0.01 
-    elif prob_type == 'nonconvex':
-        defaults['batchSize'] = 200
-        defaults['lr'] = 1e-3 # 1e-4-118
-        defaults['hiddenSize'] = 200
-        defaults['inner_warmstart'] = 100
-        defaults['inner_iter'] = 25
-        defaults['outer_iter'] = 15
-        defaults['beta'] = 5
-        defaults['rho'] = 0.0001
-        defaults['lambda'] = 0.1
-        defaults['gamma'] = 0.01
-    elif prob_type == 'acopf57':
-        defaults['batchSize'] = 200
-        defaults['lr'] = 1e-3 # 1e-4-118
-        defaults['hiddenSize'] = 200
-        defaults['inner_warmstart'] = 100
-        defaults['inner_iter'] = 25
-        defaults['outer_iter'] = 15
-        defaults['beta'] = 5
-        defaults['rho'] = 0.1
-        defaults['lambda'] = 0.1
-        defaults['gamma'] = 0.01
-
-    else:
-        raise NotImplementedError
-
-    return defaults
-
-
 def gauge_default_args(prob_type):
     defaults = {}
     defaults['simpleVar'] = 100
     defaults['simpleIneq'] = 50
     defaults['simpleEq'] = 50
-    defaults['simpleEx'] = 10000
+    defaults['simpleEx'] = 1000
     defaults['nonconvexVar'] = 100
     defaults['nonconvexIneq'] = 50
     defaults['nonconvexEq'] = 50
@@ -265,13 +210,8 @@ def gauge_default_args(prob_type):
     if prob_type == 'simple':
         defaults['batchSize'] = 200
         defaults['lr'] = 1e-3
-        defaults['hiddenSize'] = 200
-        defaults['epochs'] = 3000
-    elif prob_type == 'nonconvex':
-        defaults['batchSize'] = 200
-        defaults['lr'] = 1e-3 # 1e-4-118
-        defaults['hiddenSize'] = 200
-        defaults['epochs'] = 2000
+        defaults['hiddenSize'] = 500
+        defaults['epochs'] = 5000
     else:
         raise NotImplementedError
 
