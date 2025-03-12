@@ -2,6 +2,7 @@ import gzip
 import osqp
 import pickle
 import numpy as np
+import os
 
 from tqdm import tqdm
 from scipy.sparse import csc_matrix
@@ -11,9 +12,13 @@ num_samples = 1000
 # num_ineq = 500
 # num_eq = 500
 
-num_var = 1500
-num_ineq = 750
-num_eq = 750
+num_var = 100
+num_ineq = 50
+num_eq = 50
+
+data_dir = f"/data1/jxxiong/DC3/datasets/QP_RHS_{num_var}_{num_ineq}_{num_eq}"
+if not os.path.exists(data_dir):
+    os.makedirs(data_dir)
 
 
 Q0 = 0.5*np.diag(np.random.random(num_var))
@@ -39,7 +44,7 @@ for i in tqdm(range(num_samples)):
                     'A': A0, 'b': b0[i, :], 'A0': A01, 'zl': zl1, 'zu': zu1,
                      'x': results.x, 'y': results.y}
     
-        dict_name = '/data1/jxxiong/DC3/datasets/QP_RHS_{}_{}_{}/qp_rhs_{}.gz'.format(num_var, num_ineq, num_eq, i)
+        dict_name = os.path.join(data_dir, f'qp_rhs_{i}.gz')
         with gzip.open(dict_name, 'wb') as f:
             pickle.dump(data_dict, f)
     else:
