@@ -20,10 +20,14 @@ from setproctitle import setproctitle
 import os
 import argparse
 
-from utils import my_hash, str_to_bool
+from utils import my_hash, str_to_bool, load_data, build_loader
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+# set random seed
+np.random.seed(17)
+torch.manual_seed(17)
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
@@ -91,33 +95,26 @@ def main():
     print(args)
 
     setproctitle('DC3-{}'.format(args['probType']))
-
     # Load data, and put on GPU if needed
     prob_type = args['probType']
     if prob_type == 'simple':
-        filepath = os.path.join('datasets', 'simple', "random_simple_dataset_var{}_ineq{}_eq{}_ex{}".format(
-            args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
-    elif prob_type == 'nonconvex':
-        filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
-            args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
-    elif prob_type == 'acopf57':
-        filepath = os.path.join('datasets', 'acopf', 'acopf57_dataset')
+        data_dir = os.path.join(args['prefix'], 'datasets', "QP_RHS_{}_{}_{}".format(args['simpleVar'], args['simpleIneq'], args['simpleEq']))
     else:
         raise NotImplementedError
 
-    with open(filepath, 'rb') as f:
-        data = pickle.load(f)
-    for attr in dir(data):
-        var = getattr(data, attr)
-        if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
-            try:
-                setattr(data, attr, var.to(DEVICE))
-            except AttributeError:
-                pass
-    data._device = DEVICE
+    # with open(filepath, 'rb') as f:
+    #     data = pickle.load(f)
+    # for attr in dir(data):
+    #     var = getattr(data, attr)
+    #     if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+    #         try:
+    #             setattr(data, attr, var.to(DEVICE))
+    #         except AttributeError:
+    #             pass
+    # data._device = DEVICE
     
     prefix = args['prefix']
-    save_dir = os.path.join(prefix + 'results', str(data), 'method', my_hash(str(sorted(list(args.items())))),
+    save_dir = os.path.join(prefix + 'results', f"QP_RHS_{args['simpleVar']}_{args['simpleIneq']}_{args['simpleEq']}", 'method', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -125,21 +122,26 @@ def main():
         pickle.dump(args, f)
     
     # Run method
-    train_net(data, args, save_dir)
+    train_net(data_dir, args, save_dir)
 
 
-def train_net(data, args, save_dir):
+def train_net(data_dir, args, save_dir):
     solver_step = args['lr']
     nepochs = args['epochs']
     batch_size = args['batchSize']
 
-    train_dataset = TensorDataset(data.trainX)
-    valid_dataset = TensorDataset(data.validX)
-    test_dataset = TensorDataset(data.testX)
+    # train_dataset = TensorDataset(data.trainX)
+    # valid_dataset = TensorDataset(data.validX)
+    # test_dataset = TensorDataset(data.testX)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    valid_loader = DataLoader(valid_dataset, batch_size=len(valid_dataset))
-    test_loader = DataLoader(test_dataset, batch_size=len(test_dataset))
+    # train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    # valid_loader = DataLoader(valid_dataset, batch_size=len(valid_dataset))
+    # test_loader = DataLoader(test_dataset, batch_size=len(test_dataset))
+    
+    data = load_data(data_dir, np.arange(1000))
+    train_loader = build_loader(data, batch_size, shuffle=True)
+    valid_loader = build_loader(data, len(data.validX))
+    test_loader = build_loader(data, len(data.testX))
 
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
@@ -153,13 +155,14 @@ def train_net(data, args, save_dir):
         solver_net.eval()
         for Xvalid in valid_loader:
             Xvalid = Xvalid[0].to(DEVICE)
+            # print(Xvalid.shape)
             eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
 
         # Get test loss
-        solver_net.eval()
-        for Xtest in test_loader:
-            Xtest = Xtest[0].to(DEVICE)
-            eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
+        # solver_net.eval()
+        # for Xtest in test_loader:
+        #     Xtest = Xtest[0].to(DEVICE)
+        #     eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
 
         # Get train loss
         solver_net.train()
