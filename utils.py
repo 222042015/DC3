@@ -216,7 +216,7 @@ class SimpleProblem:
         return self._device
 
     def obj_fn(self, Y):
-        return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)
+        return ((Y@self.Q)*Y + self.p*Y).sum(dim=1)  # to match the formulation in osqp, remove the factor 0.5
 
     def eq_resid(self, X, Y):
         return X - Y@self.A.T
