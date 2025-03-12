@@ -28,7 +28,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 def main():
     parser = argparse.ArgumentParser(description='pdl')
-    parser.add_argument('--probType', type=str, default='convex_qcqp',help='problem type')
+    parser.add_argument('--probType', type=str, default='simple',help='problem type')
     parser.add_argument('--simpleVar', type=int, 
         help='number of decision vars for simple problem')
     parser.add_argument('--simpleIneq', type=int,
@@ -84,41 +84,21 @@ def main():
     # Load data, and put on GPU if needed
     prob_type = args['probType']
     if prob_type == 'simple':
-        filepath = os.path.join('datasets', 'simple', "random_simple_dataset_var{}_ineq{}_eq{}_ex{}".format(
+        filepath = os.path.join(args['prefix'], 'datasets', "random_simple_dataset_var{}_ineq{}_eq{}_ex{}".format(
             args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
-    elif prob_type == 'nonconvex':
-        filepath = os.path.join('datasets', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
-            args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
-    elif 'acopf' in prob_type:
-        filepath = os.path.join('datasets', 'acopf', prob_type + '_dataset')
-    elif prob_type == 'convex_qcqp':
-        filepath = os.path.join('datasets', 'convex_qcqp', "random_{}_{}_dataset_var{}_ineq{}_eq{}_ex{}".format(
-            2023, prob_type, args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
-        with open(filepath, 'rb') as f:
-            dataset = pickle.load(f)
-        data = QCQPProbem(dataset, 833)
-        data.device = DEVICE
-        for attr in dir(data):
-            var = getattr(data, attr)
-            if torch.is_tensor(var):
-                try:
-                    setattr(data, attr, var.to(DEVICE))
-                except AttributeError:
-                    pass
     else:
         raise NotImplementedError
     # read the data and transfer to GPU
-    if prob_type != 'convex_qcqp':
-        with open(filepath, 'rb') as f:
-            data = pickle.load(f)
-        for attr in dir(data):
-            var = getattr(data, attr)
-            if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
-                try:
-                    setattr(data, attr, var.to(DEVICE))
-                except AttributeError:
-                    pass
-        data._device = DEVICE
+    with open(filepath, 'rb') as f:
+        data = pickle.load(f)
+    for attr in dir(data):
+        var = getattr(data, attr)
+        if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+            try:
+                setattr(data, attr, var.to(DEVICE))
+            except AttributeError:
+                pass
+    data._device = DEVICE
 
     print("number of samples: {}".format(data.num))
 
@@ -290,6 +270,12 @@ def train_net(data, args, save_dir):
             with open(os.path.join(save_dir, 'primal_net.dict'), 'wb') as f:
                 torch.save(primal.state_dict(), f)
             with open(os.path.join(save_dir, 'dual_net.dict'), 'wb') as f:
+                torch.save(dual.state_dict(), f)
+        
+        if k % 10 == 0:
+            with open(os.path.join(save_dir, f'primal_net_{k}.dict'), 'wb') as f:
+                torch.save(primal.state_dict(), f)
+            with open(os.path.join(save_dir, f'dual_net_{k}.dict'), 'wb') as f:
                 torch.save(dual.state_dict(), f)
             
 

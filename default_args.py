@@ -177,7 +177,7 @@ def pdl_default_args(prob_type):
 
     if prob_type == "simple":
         defaults['max_outer_iter'] = 100 # K
-        defaults['max_inner_iter'] = 500 #L
+        defaults['max_inner_iter'] = 1000 #L
         defaults['alpha'] = 10 #10 # alpha
         defaults['tau'] = 0.8 # tau
         defaults['rho_max'] = 5000

@@ -112,7 +112,7 @@ def main():
     data._device = DEVICE
     
     prefix = args['prefix']
-    save_dir = os.path.join(prefix + 'results', str(data), 'method', my_hash(str(sorted(list(args.items())))),
+    save_dir = os.path.join(prefix + 'results', str(data), 'method_dc3', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -137,6 +137,7 @@ def train_net(data, args, save_dir):
     test_loader = DataLoader(test_dataset, batch_size=len(test_dataset))
 
     solver_net = NNSolver(data, args)
+    # load the model.dict
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
 
@@ -193,6 +194,11 @@ def train_net(data, args, save_dir):
                 pickle.dump(stats, f)
             with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
                 torch.save(solver_net.state_dict(), f)
+        
+        if i % 1000 == 0:
+            with open(os.path.join(save_dir, f'solver_net_{i}.dict'), 'wb') as f:
+                torch.save(solver_net.state_dict(), f)
+                
             
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:

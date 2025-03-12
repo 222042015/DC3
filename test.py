@@ -24,15 +24,15 @@ def main():
     parser = argparse.ArgumentParser(description='test')
     parser.add_argument('--probType', type=str, default='simple',
         choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
-    parser.add_argument('--baseline_method', type=str, default='gauge',
+    parser.add_argument('--baseline_method', type=str, default='pdl',
         choices=['gauge', 'pdl', 'dc3'], help='baseline method')
-    parser.add_argument('--simpleVar', type=int, 
+    parser.add_argument('--simpleVar', type=int, default=1000,
         help='number of decision vars for simple problem')
-    parser.add_argument('--simpleIneq', type=int,
+    parser.add_argument('--simpleIneq', type=int, default=500,
         help='number of inequality constraints for simple problem')
-    parser.add_argument('--simpleEq', type=int,
+    parser.add_argument('--simpleEq', type=int, default=500,
         help='number of equality constraints for simple problem')
-    parser.add_argument('--simpleEx', type=int,
+    parser.add_argument('--simpleEx', type=int, default=1000,
         help='total number of datapoints for simple problem')
     parser.add_argument('--prefix', type=str, default='/data1/jxxiong/DC3/',
         help='directory to the results')
@@ -43,12 +43,12 @@ def main():
     args = vars(args) # change to dictionary
     baseline_method = args['baseline_method']
     test_num = args['testNum']
-    model_dir = os.path.join(args['prefix'], 'results', f'SimpleProblem-{args["simpleVar"]}-{args["simpleIneq"]}-{args["simpleEq"]}-{args["simpleEx"]}', 'method_'+args['baseline_method'], 'final')
+    model_dir = os.path.join(args['prefix'], 'baseline_result', f'SimpleProblem-{args["simpleVar"]}-{args["simpleIneq"]}-{args["simpleEq"]}-{args["simpleEx"]}', 'method_'+args['baseline_method'])
     if not os.path.exists(model_dir):
         raise FileNotFoundError(f"Model directory {model_dir} does not exist.")
     
     
-    if baseline_method == 'dc3':
+    if baseline_method in ['dc3', 'pdl']:
     # load test dataset
         test_dir = os.path.join(args['prefix'], 'datasets', f'random_simple_dataset_var{args["simpleVar"]}_ineq{args["simpleIneq"]}_eq{args["simpleEq"]}_ex{args["testNum"]}')
         if os.path.exists(test_dir):
@@ -67,22 +67,55 @@ def main():
             args = pickle.load(f)
 
         # load model
-
-        from method import NNSolver
-        solver = NNSolver(test_data, args)
-        # load the model.dict
-        solver.load_state_dict(torch.load(os.path.join(model_dir, 'model.dict')))
-        solver.to(DEVICE)
-        solver.eval()
-        # test
-        total_time = 0
-        for Xtest in test_loader:
-            Xtest = Xtest[0].to(DEVICE)
-            start_time = time.time()
+        if baseline_method == 'dc3':
+            from method import NNSolver, grad_steps_all
+            solver = NNSolver(test_data, args)
+            # load the model.dict
+            solver.load_state_dict(torch.load(os.path.join(model_dir, 'solver_net.dict')))
+            solver.to(DEVICE)
+            solver.eval()
+            # test
+            total_time = 0
+            for Xtest in test_loader:
+                Xtest = Xtest[0].to(DEVICE)
+                start_time = time.time()
+                Ytest = solver(Xtest)
+                Ycorr, steps = grad_steps_all(test_data, Xtest, Ytest, args)
+                end_time = time.time()
+                total_time += end_time - start_time
+            print(f"Average time: {total_time / test_num}")
+            
+            Xtest = test_data.testX.to(DEVICE)
             Ytest = solver(Xtest)
-            end_time = time.time()
-            total_time += end_time - start_time
-        print(f"Average time: {total_time / args['testNum']}")
+            Ycorr, steps = grad_steps_all(test_data, Xtest, Ytest, args)
+            print("obj_fn: ", test_data.obj_fn(Ycorr).mean().item())
+            print("ineq_dist_mean: ", test_data.ineq_dist(Xtest, Ycorr).mean().item())
+            print("eq_resid_mean: ", torch.mean(torch.abs(test_data.eq_resid(Xtest, Ycorr)), dim=1).mean().item())
+            
+        elif baseline_method == 'pdl':
+            from method_pdl import Primal_NN
+            solver = Primal_NN(test_data, args)
+            # load the model.dict
+            solver.load_state_dict(torch.load(os.path.join(model_dir, 'primal_net.dict')))
+            solver.to(DEVICE)
+            solver.eval()
+            # test
+            total_time = 0
+            for Xtest in test_loader:
+                Xtest = Xtest[0].to(DEVICE)
+                start_time = time.time()
+                Ytest = solver(Xtest)
+                end_time = time.time()
+                total_time += end_time - start_time
+            print(f"Average time: {total_time / test_num}")
+
+            Xtest = test_data.testX.to(DEVICE)
+            Ytest = solver(Xtest)
+            print("obj_fn: ", test_data.obj_fn(Ytest).mean().item())
+            print("ineq_dist_mean: ", test_data.ineq_dist(Xtest, Ytest).mean().item())
+            print("eq_resid_mean: ", torch.mean(torch.abs(test_data.eq_resid(Xtest, Ytest)), dim=1).mean().item())
+        
+        
     elif baseline_method == 'gauge':
         
         test_dir = os.path.join(args['prefix'], 'datasets', f'random_simple_dataset_var{args["simpleVar"]}_ineq{args["simpleIneq"]}_eq{args["simpleEq"]}_ex{args["testNum"]}_bounded')
@@ -136,8 +169,8 @@ def main():
         Ypartial_test = test_data.gauge_map(v_test, IPtest, Xtest)
         Yhat_test = test_data.complete_partial(Xtest, Ypartial_test)
         print("obj_fn: ", test_data.obj_fn(Yhat_test).mean().item())
-        print("ineq_dist: ", test_data.ineq_dist(Xtest, Yhat_test).mean().item())
-        print("eq_resid: ", test_data.eq_resid(Xtest, Yhat_test).mean().item())
+        print("ineq_dist_mean: ", test_data.ineq_dist(Xtest, Yhat_test).mean().item())
+        print("eq_resid_mean: ", torch.mean(torch.abs(test_data.eq_resid(Xtest, Yhat_test)), dim=1).mean().item())
 
 if __name__ == '__main__':
     main()

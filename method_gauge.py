@@ -76,11 +76,8 @@ def main():
     # Load data, and put on GPU if needed
     prob_type = args['probType']
     if prob_type == 'simple':
-        filepath = os.path.join('datasets_gauge', 'simple', "random_simple_dataset_var{}_ineq{}_eq{}_ex{}".format(
+        filepath = os.path.join(args['prefix'], 'datasets', "random_simple_dataset_var{}_ineq{}_eq{}_ex{}_bounded".format(
             args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
-    elif prob_type == 'nonconvex':
-        filepath = os.path.join('datasets_gauge', 'nonconvex', "random_nonconvex_dataset_var{}_ineq{}_eq{}_ex{}".format(
-            args['nonconvexVar'], args['nonconvexIneq'], args['nonconvexEq'], args['nonconvexEx']))
     else:
         raise NotImplementedError
     # read the data and transfer to GPU
@@ -180,6 +177,10 @@ def train_net(data, args, save_dir):
             with open(os.path.join(save_dir, 'solver_net.dict'), 'wb') as f:
                 torch.save(solver_net.state_dict(), f)
         scheduler.step()
+        
+        if i % 1000 == 0:
+            with open(os.path.join(save_dir, f'solver_net_{i}.dict'), 'wb') as f:
+                torch.save(solver_net.state_dict(), f)
 
 
     with open(os.path.join(save_dir, 'stats.dict'), 'wb') as f:
