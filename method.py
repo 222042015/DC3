@@ -101,17 +101,6 @@ def main():
         data_dir = os.path.join(args['prefix'], 'datasets', "QP_RHS_{}_{}_{}".format(args['simpleVar'], args['simpleIneq'], args['simpleEq']))
     else:
         raise NotImplementedError
-
-    # with open(filepath, 'rb') as f:
-    #     data = pickle.load(f)
-    # for attr in dir(data):
-    #     var = getattr(data, attr)
-    #     if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
-    #         try:
-    #             setattr(data, attr, var.to(DEVICE))
-    #         except AttributeError:
-    #             pass
-    # data._device = DEVICE
     
     prefix = args['prefix']
     save_dir = os.path.join(prefix + 'results', f"QP_RHS_{args['simpleVar']}_{args['simpleIneq']}_{args['simpleEq']}", 'method', my_hash(str(sorted(list(args.items())))),
@@ -145,16 +134,16 @@ def train_net(data_dir, args, save_dir):
 
         # Get valid loss
         solver_net.eval()
-        for Xvalid in numpy_batch_loader(valid_idx, batch_size, shuffle=False):
-            data1 = load_data(data_dir, Xvalid, valid_frac=0.0, test_frac=0.0, device=None)
+        for idx in numpy_batch_loader(valid_idx, batch_size, shuffle=False):
+            data1 = load_data(data_dir, idx, valid_frac=0.0, test_frac=0.0, device=None)
             Xvalid = data1.trainX.to(DEVICE)
             # print(Xvalid.shape)
             eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
 
         # # Get test loss
         # solver_net.eval()
-        # for Xtest in numpy_batch_loader(test_idx, batch_size, shuffle=False):
-        #     data1 = load_data(data_dir, Xtest, valid_frac=0.0, test_frac=0.0)
+        # for idx in numpy_batch_loader(test_idx, batch_size, shuffle=False):
+        #     data1 = load_data(data_dir, idx, valid_frac=0.0, test_frac=0.0)
         #     Xtest = data1.trainX.to(DEVICE)
         #     eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
 
