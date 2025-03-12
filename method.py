@@ -20,7 +20,7 @@ from setproctitle import setproctitle
 import os
 import argparse
 
-from utils import my_hash, str_to_bool, load_data, build_loader
+from utils import my_hash, str_to_bool, load_data, build_loader, numpy_batch_loader
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -130,31 +130,24 @@ def train_net(data_dir, args, save_dir):
     nepochs = args['epochs']
     batch_size = args['batchSize']
 
-    # train_dataset = TensorDataset(data.trainX)
-    # valid_dataset = TensorDataset(data.validX)
-    # test_dataset = TensorDataset(data.testX)
-
-    # train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    # valid_loader = DataLoader(valid_dataset, batch_size=len(valid_dataset))
-    # test_loader = DataLoader(test_dataset, batch_size=len(test_dataset))
+    train_idx = np.arange(940)
+    valid_idx = np.arange(940, 970)
+    test_idx = np.arange(970, 1000)
     
-    data = load_data(data_dir, np.arange(1000))
-    train_loader = build_loader(data, batch_size, shuffle=True)
-    valid_loader = build_loader(data, len(data.validX))
-    test_loader = build_loader(data, len(data.testX))
-
+    data = load_data(data_dir, [0])
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
-
+    
     stats = {}
     for i in range(nepochs):
         epoch_stats = {}
 
         # Get valid loss
         solver_net.eval()
-        for Xvalid in valid_loader:
-            Xvalid = Xvalid[0].to(DEVICE)
+        for idx in numpy_batch_loader(valid_idx, batch_size, shuffle=False):
+            data = load_data(data_dir, idx)
+            Xvalid = data.validX.to(DEVICE)
             # print(Xvalid.shape)
             eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
 
@@ -166,11 +159,13 @@ def train_net(data_dir, args, save_dir):
 
         # Get train loss
         solver_net.train()
-        for Xtrain in train_loader:
-            Xtrain = Xtrain[0].to(DEVICE)
+        # for Xtrain in train_loader:
+        for idx in numpy_batch_loader(train_idx, batch_size, shuffle=True):
+            data = load_data(data_dir, idx)
+            Xtrain = data.trainX.to(DEVICE)
             start_time = time.time()
             solver_opt.zero_grad()
-            Yhat_train = solver_net(Xtrain)
+            Yhat_train = solver_net(Xtrain, data)
             Ynew_train = grad_steps(data, Xtrain, Yhat_train, args)
             train_loss = total_loss(data, Xtrain, Ynew_train, args)
             train_loss.sum().backward()
@@ -213,7 +208,7 @@ def train_net(data_dir, args, save_dir):
         solver_net.eval()
         for Xtest in test_loader:
             Xtest = Xtest[0].to(DEVICE)
-            Ytest = solver_net(Xtest)
+            Ytest = solver_net(Xtest, data)
             Ycorr, steps = grad_steps_all(data, Xtest, Ytest, args)
     
     with open(os.path.join(save_dir, 'sol.dict'), 'wb') as f:
@@ -240,7 +235,7 @@ def eval_net(data, X, solver_net, args, prefix, stats):
     make_prefix = lambda x: "{}_{}".format(prefix, x)
 
     start_time = time.time()
-    Y = solver_net(X)
+    Y = solver_net(X, data)
     base_end_time = time.time()
 
     Ycorr, steps = grad_steps_all(data, X, Y, args)
@@ -373,7 +368,6 @@ def grad_steps_all(data, X, Y, args):
 class NNSolver(nn.Module):
     def __init__(self, data, args):
         super().__init__()
-        self._data = data
         self._args = args
         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
         layers = reduce(operator.add,
@@ -393,15 +387,15 @@ class NNSolver(nn.Module):
 
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, data):
         out = self.net(x)
  
         if self._args['useCompl']:
             if 'acopf' in self._args['probType']:
                 out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-            return self._data.complete_partial(x, out)
+            return data.complete_partial(x, out)
         else:
-            return self._data.process_output(x, out)
+            return data.process_output(x, out)
 
 if __name__=='__main__':
     main()
