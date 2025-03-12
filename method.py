@@ -20,14 +20,10 @@ from setproctitle import setproctitle
 import os
 import argparse
 
-from utils import my_hash, str_to_bool, load_data, build_loader, numpy_batch_loader     
+from utils import my_hash, str_to_bool
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
-# set random seed
-np.random.seed(17)
-torch.manual_seed(17)
 
 def main():
     parser = argparse.ArgumentParser(description='DC3')
@@ -95,15 +91,28 @@ def main():
     print(args)
 
     setproctitle('DC3-{}'.format(args['probType']))
+
     # Load data, and put on GPU if needed
     prob_type = args['probType']
     if prob_type == 'simple':
-        data_dir = os.path.join(args['prefix'], 'datasets', "QP_RHS_{}_{}_{}".format(args['simpleVar'], args['simpleIneq'], args['simpleEq']))
+        filepath = os.path.join(args['prefix'], 'datasets', "random_simple_dataset_var{}_ineq{}_eq{}_ex{}".format(
+            args['simpleVar'], args['simpleIneq'], args['simpleEq'], args['simpleEx']))
     else:
         raise NotImplementedError
+
+    with open(filepath, 'rb') as f:
+        data = pickle.load(f)
+    for attr in dir(data):
+        var = getattr(data, attr)
+        if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+            try:
+                setattr(data, attr, var.to(DEVICE))
+            except AttributeError:
+                pass
+    data._device = DEVICE
     
     prefix = args['prefix']
-    save_dir = os.path.join(prefix + 'results', f"QP_RHS_{args['simpleVar']}_{args['simpleIneq']}_{args['simpleEq']}", 'method', my_hash(str(sorted(list(args.items())))),
+    save_dir = os.path.join(prefix + 'results', str(data), 'method', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -111,22 +120,25 @@ def main():
         pickle.dump(args, f)
     
     # Run method
-    train_net(data_dir, args, save_dir)
+    train_net(data, args, save_dir)
 
 
-def train_net(data_dir, args, save_dir):
+def train_net(data, args, save_dir):
     solver_step = args['lr']
     nepochs = args['epochs']
     batch_size = args['batchSize']
 
-    data = load_data(data_dir, [0])
+    train_dataset = TensorDataset(data.trainX)
+    valid_dataset = TensorDataset(data.validX)
+    test_dataset = TensorDataset(data.testX)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=len(valid_dataset))
+    test_loader = DataLoader(test_dataset, batch_size=len(test_dataset))
+
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
-    
-    train_idx = np.arange(940)
-    valid_idx = np.arange(940, 970)
-    test_idx = np.arange(970, 1000)
 
     stats = {}
     for i in range(nepochs):
@@ -134,25 +146,20 @@ def train_net(data_dir, args, save_dir):
 
         # Get valid loss
         solver_net.eval()
-        for idx in numpy_batch_loader(valid_idx, batch_size, shuffle=False):
-            data1 = load_data(data_dir, idx, valid_frac=0.0, test_frac=0.0, device=None)
-            Xvalid = data1.trainX.to(DEVICE)
-            # print(Xvalid.shape)
+        for Xvalid in valid_loader:
+            Xvalid = Xvalid[0].to(DEVICE)
             eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
 
-        # # Get test loss
-        # solver_net.eval()
-        # for idx in numpy_batch_loader(test_idx, batch_size, shuffle=False):
-        #     data1 = load_data(data_dir, idx, valid_frac=0.0, test_frac=0.0)
-        #     Xtest = data1.trainX.to(DEVICE)
-        #     eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
+        # Get test loss
+        solver_net.eval()
+        for Xtest in test_loader:
+            Xtest = Xtest[0].to(DEVICE)
+            eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
 
         # Get train loss
         solver_net.train()
-        # for Xtrain in train_loader:
-        for idx in numpy_batch_loader(train_idx, batch_size, shuffle=True):
-            data1 = load_data(data_dir, idx, valid_frac=0.0, test_frac=0.0, device=None)
-            Xtrain = data1.trainX.to(DEVICE)
+        for Xtrain in train_loader:
+            Xtrain = Xtrain[0].to(DEVICE)
             start_time = time.time()
             solver_opt.zero_grad()
             Yhat_train = solver_net(Xtrain)
@@ -196,9 +203,8 @@ def train_net(data_dir, args, save_dir):
         # save the solution into .mat file
     with torch.no_grad():
         solver_net.eval()
-        for Xtest in numpy_batch_loader(test_idx, batch_size, shuffle=False):
-            data1 = load_data(data_dir, Xtest, valid_frac=0.0, test_frac=0.0, device=None)
-            Xtest = data1.trainX.to(DEVICE)
+        for Xtest in test_loader:
+            Xtest = Xtest[0].to(DEVICE)
             Ytest = solver_net(Xtest)
             Ycorr, steps = grad_steps_all(data, Xtest, Ytest, args)
     
@@ -359,8 +365,8 @@ def grad_steps_all(data, X, Y, args):
 class NNSolver(nn.Module):
     def __init__(self, data, args):
         super().__init__()
-        self._args = args
         self._data = data
+        self._args = args
         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
         layers = reduce(operator.add,
             [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]

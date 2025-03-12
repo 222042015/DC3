@@ -306,7 +306,7 @@ class SimpleProblem:
         self._Y = torch.tensor(Y[feas_mask])
         return Y
 
-def load_data(data_dir, index, device=DEVICE, valid_frac=0.1, test_frac=0.1):
+def load_data(data_dir, index, device=DEVICE, valid_frac=0.03, test_frac=0.03):
     '''
     read the data from the .gz file
     the Q, p, G, c, A are the same for all the instances, only store the last one 
