@@ -20,7 +20,7 @@ from setproctitle import setproctitle
 import os
 import argparse
 
-from utils import my_hash, str_to_bool, load_data, build_loader, numpy_batch_loader
+from utils import my_hash, str_to_bool, load_data, build_loader, numpy_batch_loader     
 import default_args
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -130,42 +130,43 @@ def train_net(data_dir, args, save_dir):
     nepochs = args['epochs']
     batch_size = args['batchSize']
 
-    train_idx = np.arange(940)
-    valid_idx = np.arange(940, 970)
-    test_idx = np.arange(970, 1000)
-    
     data = load_data(data_dir, [0])
     solver_net = NNSolver(data, args)
     solver_net.to(DEVICE)
     solver_opt = optim.Adam(solver_net.parameters(), lr=solver_step)
     
+    train_idx = np.arange(940)
+    valid_idx = np.arange(940, 970)
+    test_idx = np.arange(970, 1000)
+
     stats = {}
     for i in range(nepochs):
         epoch_stats = {}
 
         # Get valid loss
         solver_net.eval()
-        for idx in numpy_batch_loader(valid_idx, batch_size, shuffle=False):
-            data = load_data(data_dir, idx)
-            Xvalid = data.validX.to(DEVICE)
+        for Xvalid in numpy_batch_loader(valid_idx, batch_size, shuffle=False):
+            data1 = load_data(data_dir, Xvalid, valid_frac=0.0, test_frac=0.0, device=None)
+            Xvalid = data1.trainX.to(DEVICE)
             # print(Xvalid.shape)
             eval_net(data, Xvalid, solver_net, args, 'valid', epoch_stats)
 
-        # Get test loss
+        # # Get test loss
         # solver_net.eval()
-        # for Xtest in test_loader:
-        #     Xtest = Xtest[0].to(DEVICE)
+        # for Xtest in numpy_batch_loader(test_idx, batch_size, shuffle=False):
+        #     data1 = load_data(data_dir, Xtest, valid_frac=0.0, test_frac=0.0)
+        #     Xtest = data1.trainX.to(DEVICE)
         #     eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
 
         # Get train loss
         solver_net.train()
         # for Xtrain in train_loader:
         for idx in numpy_batch_loader(train_idx, batch_size, shuffle=True):
-            data = load_data(data_dir, idx)
-            Xtrain = data.trainX.to(DEVICE)
+            data1 = load_data(data_dir, idx, valid_frac=0.0, test_frac=0.0, device=None)
+            Xtrain = data1.trainX.to(DEVICE)
             start_time = time.time()
             solver_opt.zero_grad()
-            Yhat_train = solver_net(Xtrain, data)
+            Yhat_train = solver_net(Xtrain)
             Ynew_train = grad_steps(data, Xtrain, Yhat_train, args)
             train_loss = total_loss(data, Xtrain, Ynew_train, args)
             train_loss.sum().backward()
@@ -206,9 +207,10 @@ def train_net(data_dir, args, save_dir):
         # save the solution into .mat file
     with torch.no_grad():
         solver_net.eval()
-        for Xtest in test_loader:
-            Xtest = Xtest[0].to(DEVICE)
-            Ytest = solver_net(Xtest, data)
+        for Xtest in numpy_batch_loader(test_idx, batch_size, shuffle=False):
+            data1 = load_data(data_dir, Xtest, valid_frac=0.0, test_frac=0.0, device=None)
+            Xtest = data1.trainX.to(DEVICE)
+            Ytest = solver_net(Xtest)
             Ycorr, steps = grad_steps_all(data, Xtest, Ytest, args)
     
     with open(os.path.join(save_dir, 'sol.dict'), 'wb') as f:
@@ -235,7 +237,7 @@ def eval_net(data, X, solver_net, args, prefix, stats):
     make_prefix = lambda x: "{}_{}".format(prefix, x)
 
     start_time = time.time()
-    Y = solver_net(X, data)
+    Y = solver_net(X)
     base_end_time = time.time()
 
     Ycorr, steps = grad_steps_all(data, X, Y, args)
@@ -369,6 +371,7 @@ class NNSolver(nn.Module):
     def __init__(self, data, args):
         super().__init__()
         self._args = args
+        self._data = data
         layer_sizes = [data.xdim, self._args['hiddenSize'], self._args['hiddenSize']]
         layers = reduce(operator.add,
             [[nn.Linear(a,b), nn.BatchNorm1d(b), nn.ReLU(), nn.Dropout(p=0.2)]
@@ -387,15 +390,15 @@ class NNSolver(nn.Module):
 
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x, data):
+    def forward(self, x):
         out = self.net(x)
  
         if self._args['useCompl']:
             if 'acopf' in self._args['probType']:
                 out = nn.Sigmoid()(out)   # used to interpolate between max and min values
-            return data.complete_partial(x, out)
+            return self._data.complete_partial(x, out)
         else:
-            return data.process_output(x, out)
+            return self._data.process_output(x, out)
 
 if __name__=='__main__':
     main()
