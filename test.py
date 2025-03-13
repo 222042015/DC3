@@ -24,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description='test')
     parser.add_argument('--probType', type=str, default='simple',
         choices=['simple', 'nonconvex', 'acopf57'], help='problem type')
-    parser.add_argument('--baseline_method', type=str, default='pdl',
+    parser.add_argument('--baseline_method', type=str, default='dc3',
         choices=['gauge', 'pdl', 'dc3'], help='baseline method')
     parser.add_argument('--simpleVar', type=int, default=1000,
         help='number of decision vars for simple problem')
@@ -36,7 +36,7 @@ def main():
         help='total number of datapoints for simple problem')
     parser.add_argument('--prefix', type=str, default='/data1/jxxiong/DC3/',
         help='directory to the results')
-    parser.add_argument('--testNum', type=int, default=10,
+    parser.add_argument('--testNum', type=int, default=50,
         help='number of test datapoints')
     
     args = parser.parse_args()
@@ -55,9 +55,17 @@ def main():
             with open(test_dir, 'rb') as f:
                 test_data = pickle.load(f)
         else:
-            test_data = load_data(os.path.join(args['prefix'], 'datasets', 'QP_RHS_{}_{}_{}'.format(args['simpleVar'], args['simpleIneq'], args['simpleEq'])), np.arange(930, 930+args['testNum']), valid_frac=0.0, test_frac=1.0)
+            test_data = load_data(os.path.join(args['prefix'], 'datasets', 'QP_RHS_{}_{}_{}'.format(args['simpleVar'], args['simpleIneq'], args['simpleEq'])), np.arange(900, 900+args['testNum']), valid_frac=0.0, test_frac=1.0)
             with open(test_dir, 'wb') as f:
                 pickle.dump(test_data, f)
+        for attr in dir(test_data):
+            var = getattr(test_data, attr)
+            if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+                try:
+                    setattr(test_data, attr, var.to(DEVICE))
+                except AttributeError:
+                    pass
+        test_data._device = DEVICE
 
         test_dataset = TensorDataset(test_data.testX)
         test_loader = DataLoader(test_dataset, batch_size=1) # test the instance one by one
@@ -75,6 +83,7 @@ def main():
             solver.to(DEVICE)
             solver.eval()
             # test
+            c = 0
             total_time = 0
             for Xtest in test_loader:
                 Xtest = Xtest[0].to(DEVICE)
@@ -83,8 +92,9 @@ def main():
                 Ycorr, steps = grad_steps_all(test_data, Xtest, Ytest, args)
                 end_time = time.time()
                 total_time += end_time - start_time
+                c += 1
             print(f"Average time: {total_time / test_num}")
-            
+            print(c)
             Xtest = test_data.testX.to(DEVICE)
             Ytest = solver(Xtest)
             Ycorr, steps = grad_steps_all(test_data, Xtest, Ytest, args)
@@ -135,7 +145,7 @@ def main():
         test_data._device = DEVICE
 
         test_dataset = TensorDataset(test_data.testX, test_data.testIP)
-        test_loader = DataLoader(test_dataset, batch_size=1) # test the instance one by one
+        test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False) # test the instance one by one
 
         # load args
         with open(os.path.join(model_dir, 'args.dict'), 'rb') as f:
@@ -149,17 +159,19 @@ def main():
         
         
         total_time = 0
+        c = 0
         for Xtest, IPtest in test_loader:
+            c += 1
             Xtest = Xtest.to(DEVICE)
             IPtest = IPtest.to(DEVICE)
             start_time = time.time()
             v_test = solver(Xtest, IPtest)
-            print(v_test.device, test_data.h.device, test_data.G.device)
             Ypartial_test = test_data.gauge_map(v_test, IPtest, Xtest)
             Yhat_test = test_data.complete_partial(Xtest, Ypartial_test)
             end_time = time.time()
             total_time += end_time - start_time
         print(f"Average time: {total_time / test_num}")
+        print(c)
 
 
         # run in batch to evaluate the accuracy 

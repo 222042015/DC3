@@ -128,7 +128,7 @@ def train_net(data, args, save_dir):
     nepochs = args['epochs']
     batch_size = args['batchSize']
 
-    train_dataset = TensorDataset(data.trainX[:50])
+    train_dataset = TensorDataset(data.trainX)
     valid_dataset = TensorDataset(data.validX)
     test_dataset = TensorDataset(data.testX)
 
@@ -174,8 +174,8 @@ def train_net(data, args, save_dir):
 
         if i % 100 == 0:
             print(
-                'Epoch {}: train loss {:.4f}, eval {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}'.format(
-                i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']),
+                'Epoch {}: train loss {:.4f}, eval {:.4f}, test {:.4f}, dist {:.4f}, ineq max {:.4f}, ineq mean {:.4f}, ineq num viol {:.4f}, eq max {:.4f}, steps {}, time {:.4f}'.format(
+                i, np.mean(epoch_stats['train_loss']), np.mean(epoch_stats['valid_eval']), np.mean(epoch_stats['test_eval']),
                 np.mean(epoch_stats['valid_dist']), np.mean(epoch_stats['valid_ineq_max']),
                 np.mean(epoch_stats['valid_ineq_mean']), np.mean(epoch_stats['valid_ineq_num_viol_0']),
                 np.mean(epoch_stats['valid_eq_max']), np.mean(epoch_stats['valid_steps']), np.mean(epoch_stats['valid_time'])))

@@ -42,8 +42,8 @@ class SimpleProblem:
         s.t.       Ay =  x
                    Gy <= h
     """
-    def __init__(self, Q, p, A, G, h, X, valid_frac=0.0833, test_frac=0.0833):
-        self._Q = torch.tensor(Q)
+    def __init__(self, Q, p, A, G, h, X, valid_frac=0.03, test_frac=0.03):
+        self._Q = torch.tensor(Q) * 2
         self._p = torch.tensor(p)
         self._A = torch.tensor(A)
         self._G = torch.tensor(G)
@@ -216,7 +216,7 @@ class SimpleProblem:
         return self._device
 
     def obj_fn(self, Y):
-        return ((Y@self.Q)*Y + self.p*Y).sum(dim=1)  # to match the formulation in osqp, remove the factor 0.5
+        return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)  # to match the formulation in osqp, remove the factor 0.5
 
     def eq_resid(self, X, Y):
         return X - Y@self.A.T

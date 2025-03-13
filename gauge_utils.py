@@ -230,10 +230,13 @@ class SimpleProblem:
     @property
     def device(self):
         return self._device
+    
+    def set_Y(self, Y):
+        self._Y = torch.tensor(Y)
 
     def obj_fn(self, Y):
-        # return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)
-        return ((Y@self.Q)*Y + self.p*Y).sum(dim=1) # to match the formulation in osqp, remove the factor 0.5
+        return (0.5*(Y@self.Q)*Y + self.p*Y).sum(dim=1)
+        # return ((Y@self.Q)*Y + self.p*Y).sum(dim=1) # to match the formulation in osqp, remove the factor 0.5
 
     def eq_resid(self, X, Y):
         return X - Y@self.A.T
@@ -360,7 +363,7 @@ class SimpleProblem:
         feas_mask = ~np.isnan(IP).all(axis=1)
         self._num = feas_mask.sum()
         self._X = self._X[feas_mask]
-        self._Y = torch.tensor(IP[feas_mask])
+        self._Y = torch.tensor(self._Y[feas_mask])
         self.IP = torch.tensor(IP[feas_mask])
         self.IP_np = IP[feas_mask]
         return IP
