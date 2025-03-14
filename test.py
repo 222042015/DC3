@@ -98,6 +98,7 @@ def main():
             Xtest = test_data.testX.to(DEVICE)
             Ytest = solver(Xtest)
             Ycorr, steps = grad_steps_all(test_data, Xtest, Ytest, args)
+            print("obj_true: ", test_data.obj_fn(test_data.testY).mean().item())
             print("obj_fn: ", test_data.obj_fn(Ycorr).mean().item())
             print("ineq_dist_mean: ", test_data.ineq_dist(Xtest, Ycorr).mean().item())
             print("eq_resid_mean: ", torch.mean(torch.abs(test_data.eq_resid(Xtest, Ycorr)), dim=1).mean().item())
@@ -121,6 +122,7 @@ def main():
 
             Xtest = test_data.testX.to(DEVICE)
             Ytest = solver(Xtest)
+            print("obj_true: ", test_data.obj_fn(test_data.testY).mean().item())
             print("obj_fn: ", test_data.obj_fn(Ytest).mean().item())
             print("ineq_dist_mean: ", test_data.ineq_dist(Xtest, Ytest).mean().item())
             print("eq_resid_mean: ", torch.mean(torch.abs(test_data.eq_resid(Xtest, Ytest)), dim=1).mean().item())
@@ -180,6 +182,7 @@ def main():
         v_test = solver(Xtest, IPtest)
         Ypartial_test = test_data.gauge_map(v_test, IPtest, Xtest)
         Yhat_test = test_data.complete_partial(Xtest, Ypartial_test)
+        print("obj_true: ", test_data.obj_fn(test_data.testY).mean().item())
         print("obj_fn: ", test_data.obj_fn(Yhat_test).mean().item())
         print("ineq_dist_mean: ", test_data.ineq_dist(Xtest, Yhat_test).mean().item())
         print("eq_resid_mean: ", torch.mean(torch.abs(test_data.eq_resid(Xtest, Yhat_test)), dim=1).mean().item())

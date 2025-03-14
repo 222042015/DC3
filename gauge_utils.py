@@ -49,37 +49,62 @@ class SimpleProblem:
         s.t.       Ay =  x
                    Gy <= h
     """
-    def __init__(self, Q, p, A, G, h, X, L, U, valid_frac=0.0833, test_frac=0.0833):
-        self._Q = torch.tensor(Q)
-        self._p = torch.tensor(p)
-        self._A = torch.tensor(A)
-        self._G = torch.cat([torch.tensor(G), torch.eye(G.shape[1]), -torch.eye(G.shape[1])], dim=0)
-        self._h = torch.cat([torch.tensor(h), torch.tensor(U), -torch.tensor(L)], dim=0)
-        self._X = torch.tensor(X)
-        self._Y = None
-        self._xdim = X.shape[1]
-        self._ydim = Q.shape[0]
-        self._num = X.shape[0]
-        self._neq = A.shape[0]
-        self._nineq = G.shape[0]
-        self._nknowns = 0
-        self._valid_frac = valid_frac
-        self._test_frac = test_frac
-        det = 0
-        i = 0
-        while abs(det) < 0.0001 and i < 100:
-            self._partial_vars = np.random.choice(self._ydim, self._ydim - self._neq, replace=False)
-            self._other_vars = np.setdiff1d( np.arange(self._ydim), self._partial_vars)
-            det = torch.det(self._A[:, self._other_vars])
-            i += 1
-        if i == 100:
-            raise Exception
-        else:
-            self._A_partial = self._A[:, self._partial_vars]
-            self._A_other_inv = torch.inverse(self._A[:, self._other_vars])
+    # def __init__(self, Q, p, A, G, h, X, L, U, valid_frac=0.0833, test_frac=0.0833):
+    #     self._Q = torch.tensor(Q)
+    #     self._p = torch.tensor(p)
+    #     self._A = torch.tensor(A)
+    #     self._G = torch.cat([torch.tensor(G), torch.eye(G.shape[1]), -torch.eye(G.shape[1])], dim=0)
+    #     self._h = torch.cat([torch.tensor(h), torch.tensor(U), -torch.tensor(L)], dim=0)
+    #     self._X = torch.tensor(X)
+    #     self._Y = None
+    #     self._xdim = X.shape[1]
+    #     self._ydim = Q.shape[0]
+    #     self._num = X.shape[0]
+    #     self._neq = A.shape[0]
+    #     self._nineq = G.shape[0]
+    #     self._nknowns = 0
+    #     self._valid_frac = valid_frac
+    #     self._test_frac = test_frac
+    #     det = 0
+    #     i = 0
+    #     while abs(det) < 0.0001 and i < 100:
+    #         self._partial_vars = np.random.choice(self._ydim, self._ydim - self._neq, replace=False)
+    #         self._other_vars = np.setdiff1d( np.arange(self._ydim), self._partial_vars)
+    #         det = torch.det(self._A[:, self._other_vars])
+    #         i += 1
+    #     if i == 100:
+    #         raise Exception
+    #     else:
+    #         self._A_partial = self._A[:, self._partial_vars]
+    #         self._A_other_inv = torch.inverse(self._A[:, self._other_vars])
 
-        ### For Pytorch
-        self._device = None
+    #     ### For Pytorch
+    #     self._device = None
+    #     self.G_tmp = self.G[:, self.partial_vars] - self.G[:, self.other_vars] @ (self._A_other_inv @ self._A_partial)
+    
+    def __init__(self, problem, L, U):
+        self._Q = problem.Q
+        self._p = problem.p
+        self._A = problem.A
+        self._G = problem.G
+        self._h = problem.h
+        self._G = torch.cat([self._G, torch.eye(self._G.shape[1]), -torch.eye(self._G.shape[1])], dim=0)
+        self._h = torch.cat([self._h, torch.tensor(U), -torch.tensor(L)], dim=0)
+        self._X = problem.X
+        self._Y = problem.Y
+        self._xdim = problem.xdim
+        self._ydim = problem.ydim
+        self._num = problem.num
+        self._neq = problem.neq
+        self._nineq = problem.nineq
+        self._nknowns = problem.nknowns
+        self._partial_vars = problem._partial_vars
+        self._other_vars = problem._other_vars
+        self._A_partial = problem._A_partial
+        self._A_other_inv = problem._A_other_inv
+        self._device = problem._device
+        self._valid_frac = problem._valid_frac
+        self._test_frac = problem._test_frac
         self.G_tmp = self.G[:, self.partial_vars] - self.G[:, self.other_vars] @ (self._A_other_inv @ self._A_partial)
 
     def __str__(self):

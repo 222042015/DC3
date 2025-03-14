@@ -143,8 +143,8 @@ def method_default_args(prob_type):
         defaults['epochs'] = 50000
         defaults['batchSize'] = 200
         defaults['lr'] = 1e-4
-        defaults['hiddenSize'] = 500
-        defaults['softWeight'] = 100          # use 100 if useCompl=False
+        defaults['hiddenSize'] = 400
+        defaults['softWeight'] = 10          # use 100 if useCompl=False
         defaults['softWeightEqFrac'] = 0.5
         defaults['useCompl'] = True
         defaults['useTrainCorr'] = True
@@ -176,7 +176,7 @@ def pdl_default_args(prob_type):
     defaults['resultsSaveFreq'] = 1
 
     if prob_type == "simple":
-        defaults['max_outer_iter'] = 100 # K
+        defaults['max_outer_iter'] = 20 # K
         defaults['max_inner_iter'] = 1000 #L
         defaults['alpha'] = 10 #10 # alpha
         defaults['tau'] = 0.8 # tau
@@ -209,9 +209,9 @@ def gauge_default_args(prob_type):
 
     if prob_type == 'simple':
         defaults['batchSize'] = 200
-        defaults['lr'] = 1e-3
-        defaults['hiddenSize'] = 500
-        defaults['epochs'] = 5000
+        defaults['lr'] = 3e-4
+        defaults['hiddenSize'] = 400
+        defaults['epochs'] = 100000
     else:
         raise NotImplementedError
 

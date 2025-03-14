@@ -111,6 +111,25 @@ def main():
                 pass
     data._device = DEVICE
     
+    
+    prob_type = args['probType']
+    if prob_type == 'simple':
+        filepath = os.path.join(args['prefix'], 'datasets', "random_simple_dataset_var{}_ineq{}_eq{}_ex{}".format(
+            args['simpleVar'], args['simpleIneq'], args['simpleEq'], 50))
+    else:
+        raise NotImplementedError
+
+    with open(filepath, 'rb') as f:
+        test_data = pickle.load(f)
+    for attr in dir(test_data):
+        var = getattr(test_data, attr)
+        if not callable(var) and not attr.startswith("__") and torch.is_tensor(var):
+            try:
+                setattr(test_data, attr, var.to(DEVICE))
+            except AttributeError:
+                pass
+    test_data._device = DEVICE
+    
     prefix = args['prefix']
     save_dir = os.path.join(prefix + 'results', str(data), 'method_dc3', my_hash(str(sorted(list(args.items())))),
         str(time.time()).replace('.', '-'))
@@ -120,18 +139,22 @@ def main():
         pickle.dump(args, f)
     
     # Run method
-    train_net(data, args, save_dir)
+    train_net(data,test_data, args, save_dir)
 
 
-def train_net(data, args, save_dir):
+def train_net(data, test_data, args, save_dir):
     solver_step = args['lr']
     nepochs = args['epochs']
     batch_size = args['batchSize']
 
     train_dataset = TensorDataset(data.trainX)
     valid_dataset = TensorDataset(data.validX)
-    test_dataset = TensorDataset(data.testX)
-
+    # test_dataset = TensorDataset(data.testX)
+    test_dataset = TensorDataset(test_data.testX)
+    print(len(test_data.testX))
+    
+    print(len(train_dataset))
+    
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     valid_loader = DataLoader(valid_dataset, batch_size=len(valid_dataset))
     test_loader = DataLoader(test_dataset, batch_size=len(test_dataset))
@@ -155,7 +178,7 @@ def train_net(data, args, save_dir):
         solver_net.eval()
         for Xtest in test_loader:
             Xtest = Xtest[0].to(DEVICE)
-            eval_net(data, Xtest, solver_net, args, 'test', epoch_stats)
+            eval_net(test_data, Xtest, solver_net, args, 'test', epoch_stats)
 
         # Get train loss
         solver_net.train()

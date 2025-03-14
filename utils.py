@@ -78,7 +78,18 @@ class SimpleProblem:
         return 'SimpleProblem-{}-{}-{}-{}'.format(
             str(self.ydim), str(self.nineq), str(self.neq), str(self.num)
         )
-
+    
+    def copy_from_problem(self, problem):
+        self._Q = problem.Q
+        self._p = problem.p
+        self._A = problem.A
+        self._G = problem.G
+        self._h = problem.h
+        self._partial_vars = problem.partial_vars
+        self._other_vars = problem.other_vars
+        self._A_partial = problem.A_partial
+        self._A_other_inv = problem.A_other_inv
+        
     @property
     def Q(self):
         return self._Q
@@ -122,7 +133,14 @@ class SimpleProblem:
     @property
     def partial_unknown_vars(self):
         return self._partial_vars
+    
+    @property
+    def A_partial(self):
+        return self._A_partial
 
+    @property
+    def A_other_inv(self):
+        return self._A_other_inv
     @property
     def Q_np(self):
         return self.Q.detach().cpu().numpy()
